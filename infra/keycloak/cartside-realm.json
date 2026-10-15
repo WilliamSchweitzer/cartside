@@ -22,7 +22,7 @@
       "redirectUris": ["http://localhost:9080/auth/callback"],
       "webOrigins": [],
       "attributes": {
-        "post.logout.redirect.uris": "http://localhost:9080/"
+        "post.logout.redirect.uris": "http://localhost:9080/signed-out"
       }
     }
   ]

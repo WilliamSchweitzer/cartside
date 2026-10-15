@@ -1,32 +1,268 @@
+# File-driven standalone routes. Keep the final #END marker.
+# Keep the OIDC session settings identical on all protected routes.
+# Avoid YAML aliases: APISIX normalizes route/upstream tables in place.
 routes:
-  - id: backend
-    uri: /api/*
-    priority: 10
-    plugins:
-      proxy-rewrite:
-        regex_uri: ["^/api/(.*)", "/$1"]
-    upstream:
-      type: roundrobin
-      scheme: http
-      nodes:
-        "host.docker.internal:8080": 1
-      retries: 0
-      timeout:
-        connect: 1
-        send: 5
-        read: 5
-  - id: frontend
-    uri: /*
-    priority: -10
-    enable_websocket: true
-    upstream:
-      type: roundrobin
-      scheme: http
-      nodes:
-        "host.docker.internal:5173": 1
-      retries: 0
-      timeout:
-        connect: 1
-        send: 60
-        read: 3600
+# Gateway-owned public page must not load protected assets or automatically log in.
+- id: signed-out
+  uri: /signed-out
+  priority: 30
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() ngx.header["Content-Type"] = "text/html; charset=utf-8"; ngx.header["Cache-Control"] = "no-store";
+        ngx.say([[<!doctype html><html lang="en"><meta charset="utf-8"><title>Cartside signed out</title><main><h1>You are
+        signed out</h1><a href="/">Sign in to Cartside</a></main></html>]]); return ngx.exit(200) end
+# Only these exact API paths bypass authentication.
+- id: health
+  uris:
+  - /api/health/live
+  - /api/health/ready
+  priority: 30
+  plugins:
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/(.*)
+      - /$1
+      headers:
+        remove:
+        - Authorization
+        - Cookie
+        - X-Access-Token
+        - X-ID-Token
+        - X-Userinfo
+        - X-Refresh-Token
+        - X-User-ID
+        - X-Forwarded-User
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      host.docker.internal:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+# The callback and logout are consumed by openid-connect before proxying.
+- id: frontend
+  uri: /*
+  priority: -10
+  enable_websocket: true
+  plugins:
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: http://localhost:9080/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: http://localhost:9080/signed-out
+      bearer_only: false
+      unauth_action: auth
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie:
+          path: /
+          httponly: true
+          samesite: Lax
+          secure: false # Local HTTP only; require true with deployment HTTPS.
+          lifetime: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    proxy-rewrite:
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      host.docker.internal:5173: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 60
+      read: 3600
+# OIDC runs before the post-function; this response never reaches an upstream.
+- id: gateway-session
+  uri: /auth/session
+  priority: 30
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: http://localhost:9080/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: http://localhost:9080/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie:
+          path: /
+          httponly: true
+          samesite: Lax
+          secure: false # Local HTTP only; require true with deployment HTTPS.
+          lifetime: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    serverless-post-function:
+      phase: rewrite
+      functions:
+      - return function() ngx.header["Content-Type"] = "application/json"; ngx.header["Cache-Control"] = "no-store"; ngx.say([[{"authenticated":true}]]);
+        return ngx.exit(200) end
+# Browser cookies are accepted, but signed-out fetches get 401 rather than redirects.
+- id: backend
+  priority: 10
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: http://localhost:9080/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: http://localhost:9080/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie:
+          path: /
+          httponly: true
+          samesite: Lax
+          secure: false # Local HTTP only; require true with deployment HTTPS.
+          lifetime: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/?(.*)
+      - /$1
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      host.docker.internal:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+  uri: /api/*
+- id: backend-root
+  priority: 10
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: http://localhost:9080/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: http://localhost:9080/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie:
+          path: /
+          httponly: true
+          samesite: Lax
+          secure: false # Local HTTP only; require true with deployment HTTPS.
+          lifetime: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/?(.*)
+      - /$1
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      host.docker.internal:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+  uri: /api
 #END

@@ -51,6 +51,7 @@ export default function App() {
     <main>
       <p className="eyebrow">A grocery storefront in the making</p>
       <h1>Cartside</h1>
+      <a href="/auth/logout">Sign out</a>
       <p className="intro">A foundation for a simpler grocery shopping experience.</p>
       <p>This first screen checks the connection to the backend. Shopping features are still in development.</p>
       <section aria-labelledby="readiness-heading">

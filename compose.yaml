@@ -3,6 +3,9 @@ services:
     image: apache/apisix:3.14.1-debian
     ports:
       - "127.0.0.1:9080:9080"
+    environment:
+      CARTSIDE_OIDC_CLIENT_SECRET: ${CARTSIDE_OIDC_CLIENT_SECRET:?Set CARTSIDE_OIDC_CLIENT_SECRET in .env}
+      CARTSIDE_SESSION_SECRET: ${CARTSIDE_SESSION_SECRET:?Set CARTSIDE_SESSION_SECRET in .env}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

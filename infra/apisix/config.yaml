@@ -15,7 +15,18 @@ deployment:
 
 nginx_config:
   worker_processes: 1
+  # Docker environment alone is insufficient: preserve these in Nginx workers.
+  envs:
+    - CARTSIDE_OIDC_CLIENT_SECRET
+    - CARTSIDE_SESSION_SECRET
+  # OIDC errors and default access logs can include codes/provider responses.
+  error_log_level: crit
+  http:
+    enable_access_log: false
 
 plugins:
   - proxy-rewrite
+  - openid-connect
+  - serverless-pre-function
+  - serverless-post-function
 stream_plugins: []
