@@ -386,7 +386,7 @@ Exit criteria:
 - [x] A customer can register and sign in through Keycloak’s account console and the APISIX-managed application flow.
 - [x] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
 - [x] An unauthenticated non-health API request is rejected.
-- [ ] Initial CI checks pass.
+- [x] Initial CI checks pass.
 - [ ] Full setup works from a fresh checkout with new secrets and isolated volumes, including registration, sign-in, `/api/me`, logout, and persistence after restart.
 
 ### Fresh-checkout verification (2026-10-15)
@@ -395,7 +395,7 @@ A separate local clone with the pending CI/documentation changes overlaid used n
 
 All five documented ports were occupied by the developer’s running services. Those services, configuration, users, and volumes were untouched. Supplemental runtime checks used a temporary override: PostgreSQL published an ephemeral loopback port; APISIX and Keycloak published no ports. Go and Vite used free loopback ports. Infrastructure became healthy; APISIX’s configuration test and independent health probe passed; direct Go liveness/readiness returned 200, unauthenticated `/me` returned 401, and Vite served HTTP 200. The imported realm retained its database ID across PostgreSQL/Keycloak restart. This verifies realm persistence, not customer sign-in persistence. Only temporary processes, containers, network, volumes, secrets, and checkout were removed.
 
-**No browser checks were performed in this fresh checkout.** The prior README recorded Chrome registration/sign-in, identity display and `/api/me`, header-forgery rejection, HMR, and logout against initialized volumes. Those earlier checks underpin the checked authentication criteria above; they do not establish fresh-install success. Exact README runtime setup, gateway-to-host routing, registration, authenticated `/api/me`, logout, and customer persistence remain unverified in isolation because of fixed-address conflicts. Initial GitHub Actions success also remains pending a push. The host lacked `python3-venv`/pip, so the local parser check used the pinned PyYAML wheel extracted into the temporary directory; CI installs it normally with setup-python/pip.
+**No browser checks were performed in this fresh checkout.** The prior README recorded Chrome registration/sign-in, identity display and `/api/me`, header-forgery rejection, HMR, and logout against initialized volumes. Those earlier checks underpin the checked authentication criteria above; they do not establish fresh-install success. Exact README runtime setup, gateway-to-host routing, registration, authenticated `/api/me`, logout, and customer persistence remain unverified in isolation because of fixed-address conflicts. GitHub Actions Backend, Frontend, and Configuration jobs passed on commit `bc931a2` in the [manually dispatched run](https://github.com/WilliamSchweitzer/cartside/actions/runs/38826000326). The host lacked `python3-venv`/pip, so the local parser check used the pinned PyYAML wheel extracted into the temporary directory; CI installs it normally with setup-python/pip.
 
 Remaining manual checklist, on a machine where the documented ports are free:
 
