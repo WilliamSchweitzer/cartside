@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. Business modules, resource authorization, CI, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -86,15 +86,15 @@ Retrying the same checkout uses the same key. A changed cart requires a new chec
 
 ## Repository organization
 
-One repository contains the frontend, backend, infrastructure configuration, and documentation. The following top-level layout is proposed:
+One repository contains the frontend, backend, infrastructure configuration, and documentation. The current layout is:
 
 | Path | Contents |
 | --- | --- |
 | `frontend/` | React and TypeScript application |
 | `backend/` | Go application and internal modules |
 | `infra/` | APISIX and Keycloak configuration and supporting infrastructure |
-| `docs/` | Architecture notes and implementation decisions |
-| `.github/workflows/` | CI, manual build, and eventual deployment workflows |
+| `.github/workflows/` | CI checks |
+| `scripts/` | CI configuration parser and its pinned dependency |
 | `compose.yaml` | Local infrastructure services |
 | `.env.example` | Required local configuration with safe placeholders |
 
@@ -114,12 +114,31 @@ Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed
 
 ### Setup instructions
 
-Use **Node.js 24 LTS** (24.x, including npm) for the frontend and Go 1.24 or later for the backend; Docker Compose runs PostgreSQL 17.10. From the repository root:
+Use **Node.js 24 LTS** (24.x, including npm) for the frontend and Go 1.24.0 (matching `backend/go.mod`) for the backend; Docker Compose runs PostgreSQL 17.10. From the repository root:
 
 ```sh
 cp .env.example .env
-# Edit .env: choose an application password and match it in DATABASE_URL.
-# Generate the four Keycloak/gateway secrets using the command below before Compose validation.
+# Generate local secrets (Python 3); nothing secret is printed.
+python3 - <<'PYCODE'
+from pathlib import Path
+import secrets
+p = Path('.env')
+lines = p.read_text().splitlines()
+for key in ('POSTGRES_PASSWORD', 'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET'):
+    matches = [i for i, line in enumerate(lines) if line.startswith(key + '=')]
+    if not matches:
+        lines.append(key + '=' + secrets.token_hex(32))
+    elif lines[matches[0]].split('=', 1)[1].startswith('replace_with_'):
+        lines[matches[0]] = key + '=' + secrets.token_hex(32)
+if not any(line.startswith('KEYCLOAK_ADMIN_USERNAME=') for line in lines):
+    lines.append('KEYCLOAK_ADMIN_USERNAME=local-admin')
+# Synchronize only the example URL; preserve customized existing configuration.
+values = dict(line.split('=', 1) for line in lines if '=' in line and not line.startswith('#'))
+lines = [line.replace('replace_with_local_password', values['POSTGRES_PASSWORD'])
+         if line.startswith('DATABASE_URL=') else line for line in lines]
+p.write_text('\n'.join(lines) + '\n')
+p.chmod(0o600)
+PYCODE
 docker compose config --quiet
 docker compose up -d --wait
 # Explicitly export the trusted local file into this shell before running Go:
@@ -175,29 +194,7 @@ With PostgreSQL available, both health routes return HTTP 200 and `{"status":"ok
 
 Keycloak is pinned to `quay.io/keycloak/keycloak:26.8.1`, the supported community release selected for this milestone. It runs **development mode only**, with HTTP and insecure development defaults. This is not a production configuration. APISIX now handles application authentication. No identity headers are trusted by Go, and React handles no tokens.
 
-Before the setup commands above, generate local secrets directly into the ignored root `.env`. This preserves existing assignments and replaces only missing values or the example placeholders. Requires Python 3; nothing secret is printed:
-
-```sh
-# For a new checkout only: cp .env.example .env
-python3 - <<'PYCODE'
-from pathlib import Path
-import secrets
-p = Path('.env')
-lines = p.read_text().splitlines()
-for key in ('KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET'):
-    matches = [i for i, line in enumerate(lines) if line.startswith(key + '=')]
-    if not matches:
-        lines.append(key + '=' + secrets.token_hex(32))
-    elif lines[matches[0]].split('=', 1)[1].startswith('replace_with_'):
-        lines[matches[0]] = key + '=' + secrets.token_hex(32)
-if not any(line.startswith('KEYCLOAK_ADMIN_USERNAME=') for line in lines):
-    lines.append('KEYCLOAK_ADMIN_USERNAME=local-admin')
-p.write_text('\n'.join(lines) + '\n')
-p.chmod(0o600)
-PYCODE
-docker compose config --quiet
-docker compose up -d --wait
-```
+The setup block above generates independent application, Keycloak, and gateway secrets in the ignored `.env` and restricts it to mode 0600. It replaces missing values or example placeholders while preserving existing credentials. Python 3 is required. For an existing checkout, run only its Python block without copying `.env.example` over your configuration.
 
 Keep the existing application credentials when upgrading an initialized checkout. `.env.example` is a template, not a source of working passwords. Compose passes Keycloak secrets as container environment variables; Keycloak itself resolves `${CARTSIDE_OIDC_CLIENT_SECRET}` in the mounted realm JSON using its supported import substitution. Compose does **not** interpolate mounted JSON or scripts. Do not run plain `docker compose config`, echo secrets, or publish container inspection output. Local Docker administrators can inspect container environments.
 
@@ -287,15 +284,13 @@ assert(t.status == 401) -- endpoint reachable; missing client credentials reject
 
 Official references pinned to the selected [Keycloak 26.8.1 container guide](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/containers.adoc), [health guide](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/observability/health.adoc), [hostname guide](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/hostname.adoc), [realm import guide](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/importExport.adoc), and [APISIX 3.14 OIDC plugin](https://apisix.apache.org/docs/apisix/3.14/plugins/openid-connect/).
 
-Verified on 2026-10-15 using the existing initialized `postgres_data` volume: Compose validation/startup, repeated database provisioning, separate database ownership and restricted role privileges, in-image health probe, host and APISIX-container discovery/JWKS, internal token endpoint rejection without credentials, realm/client settings and secret substitution through the Admin REST API, Chrome registration/account-console sign-in, fresh-browser sign-in after a Keycloak restart, frontend `/` and `/catalog` with Backend ready, and direct/gateway Go liveness/readiness. No data volume was deleted. These earlier checks preceded gateway authentication; current authentication checks are recorded below. At that earlier identity-provider milestone no Go or frontend source changed; current frontend checks are recorded below.
-
 ### Container-to-host networking and exposure
 
 APISIX connects to `host.docker.internal:8080`. Compose adds Docker's `host-gateway` mapping for Linux Docker Engine (20.10+). On native Linux this normally resolves to a Docker bridge address on the host. Go must listen on an interface reachable at that address: a loopback-only listener is insufficient. `HTTP_ADDR=0.0.0.0:8080` works across interfaces, or on native Linux you can bind only the relevant Docker bridge address if it is stable and reachable. Host firewall rules must allow traffic from the Docker network.
 
 Docker Desktop normally supplies `host.docker.internal` through its host networking integration; the explicit host-gateway mapping must resolve to a reachable host address in your Desktop installation. Confirm with `docker compose exec apisix cat /etc/hosts` and the gateway requests above. Desktop runs containers inside a VM, so do not assume that a native Linux bridge address exists on the desktop host. If using a remote Docker context, this name refers to the Docker host, not necessarily the machine running Go. Use a local Docker context for this setup.
 
-The gateway port is published only on `127.0.0.1:9080`. Binding Go to `0.0.0.0:8080` also exposes its direct listener on LAN interfaces, subject to the host firewall; use a trusted development machine and restrict inbound access. Gateway routes authenticate browser sessions, but this development topology does **not** prevent direct access to host Go or Vite, or enforce gateway-exclusive access. Go verifies access tokens independently and never trusts plain identity headers. Stop any existing Go process using port 8080 before changing its listener and restarting it.
+The gateway port is published only on `127.0.0.1:9080`. Binding Go to `0.0.0.0:8080` also exposes its direct listener on LAN interfaces, subject to the host firewall; use a trusted development machine and restrict inbound access. Gateway routes authenticate browser sessions, but this development topology does **not** prevent direct access to host Go or Vite, or enforce gateway-exclusive access. Go verifies access tokens independently and never trusts plain identity headers. Ports 5432, 8180, 9080, 8080, and 5173 must be available. Do not stop another checkout’s services without permission. A separate Compose project isolates volumes but does not isolate published ports; changing ports also requires coordinated gateway, Vite WebSocket, issuer, and realm redirect changes.
 
 ### Gateway configuration and health
 
@@ -344,8 +339,6 @@ Browser verification (with all three processes running):
 - Restore PostgreSQL with `docker compose up -d --wait postgres`, click Retry, and confirm “Backend ready”. No volume deletion or Go restart is required.
 - In browser developer tools, delay the readiness request to observe loading, or block `/api/health/ready` and click Retry to observe “Network error”. Unblock and retry to recover.
 
-Verified for this milestone with Node 24 and headless Chrome: frontend lint, TypeScript checks, production build, Compose validation, APISIX configuration test, page/assets and API routing through port 9080, HMR without document reload or gateway bypass, all four readiness states, PostgreSQL stop/recovery using Retry, and the independent APISIX probe during the outage. Port contention fails startup at 5173, and an unapproved Host header returns 403. Database volumes are preserved.
-
 The gateway authentication procedure and remaining security boundaries are documented below.
 
 ## Health checks
@@ -360,13 +353,13 @@ Routine health probes do not call a paid AI provider. Healthy individual service
 
 ## CI and delivery
 
-GitHub Actions will run on pull requests and pushes to `main`:
+`.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual dispatch. Independent **Backend**, **Frontend**, and **Configuration** jobs use read-only repository permissions and cancel superseded runs for the same PR or branch. Official actions are pinned to full commit SHAs with release comments; update both together.
 
-- Go formatting checks, static analysis, and tests.
-- Frontend linting, TypeScript checks, and a production build.
-- Go build verification.
+- Backend: non-mutating formatting check, vet, race tests, and build. Go comes from `backend/go.mod`; dependencies are cached against `backend/go.sum`. Tests use local fixtures and need no PostgreSQL, Keycloak, credentials, or repository secrets.
+- Frontend: Node comes from `frontend/package.json`; npm caches against `frontend/package-lock.json`. Runs `npm ci`, lint, typecheck, and production build. There is no frontend test suite yet.
+- Configuration: Python 3.13 and pinned PyYAML parse tracked JSON/YAML; Compose validates with disposable values for every required variable and `config --quiet`. No rendered credentials are printed. Parsing does not prove runtime APISIX schemas, routing, or OIDC behavior; CI does not start the identity stack.
 
-A manually triggered build workflow will produce deployable artifacts. A separate manual deployment workflow will be added once a hosting target is selected. Deployment is outside Phase 1.
+GitHub-hosted Ubuntu runners provide Docker Compose and the C compiler needed for race tests. Local checks require the Go/Node versions above, Python 3 (install `scripts/requirements-ci.txt` in a virtual environment for configuration parsing), and Docker Engine/Desktop with Compose v2 and a local context. GitHub Actions must be enabled in repository settings; no repository secrets are needed. Confirm all three jobs after pushing; a local pass is not a remote CI pass. Deployment and artifact publishing remain future work.
 
 ## Phase 1: foundation
 
@@ -387,14 +380,31 @@ Exit criteria:
 - [x] Backend formatting, vet, test, and build checks pass.
 - [x] The README contains verified backend run and liveness verification commands.
 - [x] Local PostgreSQL and Go configuration is documented in the committed template.
-- [x] Local PostgreSQL and APISIX infrastructure is configured with Docker Compose (remaining services are planned).
+- [x] Local PostgreSQL, APISIX, and Keycloak infrastructure is configured with Docker Compose.
 - [x] React and Go run locally behind APISIX.
 - [x] Go liveness and readiness checks work through the gateway.
 - [x] A customer can register and sign in through Keycloak’s account console and the APISIX-managed application flow.
 - [x] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
 - [x] An unauthenticated non-health API request is rejected.
 - [ ] Initial CI checks pass.
-- [ ] The README contains verified setup and verification instructions for the full application.
+- [ ] Full setup works from a fresh checkout with new secrets and isolated volumes, including registration, sign-in, `/api/me`, logout, and persistence after restart.
+
+### Fresh-checkout verification (2026-10-15)
+
+A separate local clone with the pending CI/documentation changes overlaid used newly generated secrets and Compose project `cartside-phase1-ue8j6g0u`, with its own data/socket volumes. Automated checks passed: Go formatting, vet, unit/race tests and build; Node 24 `npm ci`, lint, typecheck and build; actionlint; tracked JSON/YAML parsing with PyYAML 6.0.3, including rejection of malformed fixtures; and quiet Compose validation with both new secrets and disposable CI values.
+
+All five documented ports were occupied by the developer’s running services. Those services, configuration, users, and volumes were untouched. Supplemental runtime checks used a temporary override: PostgreSQL published an ephemeral loopback port; APISIX and Keycloak published no ports. Go and Vite used free loopback ports. Infrastructure became healthy; APISIX’s configuration test and independent health probe passed; direct Go liveness/readiness returned 200, unauthenticated `/me` returned 401, and Vite served HTTP 200. The imported realm retained its database ID across PostgreSQL/Keycloak restart. This verifies realm persistence, not customer sign-in persistence. Only temporary processes, containers, network, volumes, secrets, and checkout were removed.
+
+**No browser checks were performed in this fresh checkout.** The prior README recorded Chrome registration/sign-in, identity display and `/api/me`, header-forgery rejection, HMR, and logout against initialized volumes. Those earlier checks underpin the checked authentication criteria above; they do not establish fresh-install success. Exact README runtime setup, gateway-to-host routing, registration, authenticated `/api/me`, logout, and customer persistence remain unverified in isolation because of fixed-address conflicts. Initial GitHub Actions success also remains pending a push. The host lacked `python3-venv`/pip, so the local parser check used the pinned PyYAML wheel extracted into the temporary directory; CI installs it normally with setup-python/pip.
+
+Remaining manual checklist, on a machine where the documented ports are free:
+
+- [ ] Clone separately; select a unique Compose project (`export COMPOSE_PROJECT_NAME=cartside-fresh-check`), copy the template, and follow Setup instructions with new secrets. Never reuse another checkout’s `.env` or volumes.
+- [ ] Confirm all infrastructure is healthy; start Go and Vite exactly as documented. Verify direct and gateway health routes, APISIX’s independent probe, and signed-out API/session 401 responses.
+- [ ] In a private browser, register and sign in through the gateway. Confirm Backend ready, protected assets/HMR through 9080, `/auth/session`, and minimal no-store `/api/me` matching the displayed identity.
+- [ ] Restart this project’s PostgreSQL and Keycloak, then sign in in a fresh private window with the same customer; confirm the same subject and working readiness.
+- [ ] Sign out, confirm the stable landing page and API/session 401 responses, then confirm a new login requires credentials.
+- [ ] Stop only this checkout’s host processes. From this disposable checkout, remove only its resources with `docker compose -p cartside-fresh-check down -v`, then remove its temporary secrets/checkout.
 
 ## Later milestones
 
@@ -442,7 +452,7 @@ APISIX access logging is disabled because default request logs include callback 
 
 Logout always uses the fixed local post-logout URL; query parameters do not select a redirect destination. Keycloak validates its exact redirect allowlist. The public landing page does not automatically start login. Logout is a navigation GET supported by the pinned OIDC library; SameSite=Lax does not itself prevent forced logout.
 
-**CSRF enforcement is a prerequisite for authenticated business mutations.** There are no such endpoints in this milestone. Before adding them, enforce an origin policy and CSRF tokens in addition to resource authorization. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation before claiming gateway-exclusive access; Go already validates forwarded tokens independently.
+**CSRF enforcement is a prerequisite for authenticated business mutations.** There are no such endpoints in this milestone. Before adding them, enforce an origin policy and CSRF tokens in addition to resource authorization, validate inputs in Go, and define the application account/ownership model. SameSite cookies alone are insufficient. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation before claiming gateway-exclusive access; Go already validates forwarded tokens independently.
 
 ### Authentication verification
 
@@ -467,8 +477,6 @@ In a fresh private browser:
 2. Fetch `/auth/session` from that tab with same-origin credentials: expect 200 and only `{"authenticated":true}`. Fetch `/api/nonexistent`: expect Go's 404, proving the cookie passes API enforcement. A fresh cookie-free browser must receive 401 for both.
 3. Click Retry readiness check. Make a temporary visible text edit in `frontend/src/App.tsx`, confirm HMR without document reload and the WebSocket through port 9080, then restore it.
 4. Click Sign out; confirm Keycloak ends SSO and returns to `/signed-out`. Reload: it must stay there. `/auth/session` and non-health APIs must now return 401. Click Sign in: credentials must be required again.
-
-Verified on 2026-10-15 against APISIX 3.14.1 and Keycloak 26.8.1 with initialized volumes: Compose validation/recreation and APISIX configuration test, Nginx forwarding of both secret environment names, successful client-secret exchange and cookie session sharing, fresh-browser redirect, existing-user sign-in, new-user registration through the gateway, callback and protected assets, readiness and Retry, unauthenticated session/API 401, health/landing 200, authenticated session JSON and Go 404, HMR without reload on port 9080, logout of both sessions, credential prompt on subsequent login, and landing reload without a loop. Frontend lint, typecheck and production build passed with Node 24. No Go source changed. Existing users and database volumes were preserved; registration added a local verification user.
 
 Version-matched implementation references: [APISIX OIDC plugin 3.14.1](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/openid-connect.lua), [secret resolution](https://github.com/apache/apisix/blob/3.14.1/apisix/secret.lua), [environment references](https://github.com/apache/apisix/blob/3.14.1/apisix/core/env.lua), [Nginx environment template](https://github.com/apache/apisix/blob/3.14.1/apisix/cli/ngx_tpl.lua), [pinned dependencies](https://github.com/apache/apisix/blob/3.14.1/apisix-master-0.rockspec), [lua-resty-openidc 1.7.6](https://github.com/zmartzone/lua-resty-openidc/blob/v1.7.6/lib/resty/openidc.lua), [lua-resty-session 3.10](https://github.com/bungle/lua-resty-session/blob/v3.10/lib/resty/session.lua), [Keycloak hostname 26.8.1](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/hostname.adoc), and [Keycloak logout validation 26.8.1](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/endpoints/LogoutEndpoint.java).
 
@@ -544,7 +552,5 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Access-Token: fake' http://localh
 ```
 
 In a signed-in browser, fetch `/api/me` with same-origin credentials and check the minimal subject/issuer JSON and no-store header. Repeat with fake Authorization, X-Access-Token and identity headers: the result must remain the authenticated session's identity. Do not print/copy cookies or real tokens. Check `/auth/session`, readiness Retry, logout, and the signed-out landing page as described above. To inspect the identity UI, delay `/api/me`, simulate a 503 then Retry, and simulate a 401; the latter must show explicit return-to-sign-in navigation without automatic redirects.
-
-Verification on 2026-10-15: Go formatting, vet, unit tests/race tests and build; Node 24 frontend lint/typecheck/build; Compose validation, APISIX configuration test and independent health probe; repeated audience reconciliation against the initialized realm; headless Chrome existing-user sign-in, identity UI and minimal no-store `/api/me`, fake client token/header override rejection, signed-out API/session 401, direct forged-identity rejection, public health, gateway session JSON, authenticated unknown-route 404, identity loading/failure/retry/401 UI, and logout with no landing loop and credentials required on next login. No users or volumes were deleted. Runtime outage checks also passed: Go started with Keycloak stopped and both health endpoints returned 200; with PostgreSQL stopped, liveness and APISIX stayed healthy while readiness returned 503; readiness recovered to 200 after restoration. No commit or push was made.
 
 Version-matched official references: [APISIX 3.14.1 OIDC forwarding](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/openid-connect.lua), [pre-function priority](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/serverless-pre-function.lua), [proxy-rewrite priority and phase](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/proxy-rewrite.lua), [Keycloak 26.8.1 audience mapper](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/mappers/AudienceProtocolMapper.java), [Keycloak 26.8.1 Admin REST API](https://www.keycloak.org/docs-api/26.8.1/rest-api/index.html), [go-oidc v3.14.1 verifier](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/verify.go), and [cached JWKS and rotation](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/jwks.go).
