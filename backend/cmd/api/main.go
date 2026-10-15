@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/WilliamSchweitzer/cartside/backend/internal/database"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/httpapi"
 )
 
@@ -20,6 +21,12 @@ func main() {
 }
 
 func run() error {
+	pool, err := database.NewPool(context.Background(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -30,7 +37,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(),
+		Handler:           httpapi.NewRouter(pool.Ping),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

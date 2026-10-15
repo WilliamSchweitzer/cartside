@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-The first backend milestone is implemented: a Go/Chi HTTP server with an unauthenticated `GET /health/live` endpoint, configurable listen address, server timeouts, and graceful shutdown. The storefront, business modules, infrastructure, authentication, frontend, CI, and AI integration are planned. Unless stated otherwise, the architecture and scope below describe the intended design.
+Implemented: the Go/Chi server, unauthenticated liveness and PostgreSQL readiness, a shared pgx v5 pool, graceful shutdown, and local PostgreSQL in Docker Compose. The storefront, business modules, remaining infrastructure, authentication, frontend, CI, and AI integration are planned. Unless stated otherwise, the architecture and scope below describe the intended design.
 
 ## MVP
 
@@ -59,7 +59,7 @@ The AI provider key belongs to APISIX. The internal AI route must require servic
 
 ## Go backend
 
-The backend will be a modular monolith: one Go application with five internal business modules. Currently, only `cmd/api` (process startup and shutdown) and `internal/httpapi` (router and liveness handler) are implemented.
+The backend will be a modular monolith: one Go application with five internal business modules. Currently, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves health routes. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
 
 | Module | Responsibility |
 | --- | --- |
@@ -100,7 +100,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 ## Local development
 
-React and Go run directly on the developer's machine. Docker Compose runs APISIX, Keycloak, PostgreSQL, and any supporting services required by the chosen APISIX configuration.
+React and Go are intended to run directly on the developer's machine. Docker Compose currently runs PostgreSQL; APISIX, Keycloak, React, and supporting gateway services are planned.
 
 The browser accesses the application through one APISIX address. APISIX routes `/` to the React development server and `/api` to Go. The setup must account for container-to-host connectivity, React development WebSocket traffic, and a consistent Keycloak issuer URL reachable by both the browser and gateway.
 
@@ -114,29 +114,42 @@ The browser accesses the application through one APISIX address. APISIX routes `
 
 ### Setup instructions
 
-The backend runs on the host with Go 1.24 or later. No infrastructure or authentication is needed for liveness. From the repository root:
+The backend runs on the host with Go 1.24 or later; Docker Compose runs PostgreSQL 17.10. From the repository root:
 
 ```sh
+cp .env.example .env
+# Edit .env: choose a local password and match its URL-encoded value in DATABASE_URL.
+docker compose config --quiet
+docker compose up -d --wait postgres
+# Explicitly export the trusted local file into this shell before running Go:
+set -a
+. ./.env
+set +a
 cd backend
 go run ./cmd/api
 ```
 
-In another terminal:
+Compose automatically reads the root `.env` for interpolation of PostgreSQL settings; it does not export variables into your shell. Go reads only its process environment and does not load `.env`. The shell commands above export `DATABASE_URL` and the optional `HTTP_ADDR`. Only source a trusted file, using shell-compatible assignments. Alternatively, supply `DATABASE_URL` directly in the Go process environment.
+
+`DATABASE_URL` is required and must be a PostgreSQL URL with a host, user, and database name. Missing or malformed configuration fails startup with a generic error. A database connection failure does not prevent startup. `HTTP_ADDR` defaults to `:8080`; the example binds to loopback. Local `sslmode=disable` is for this host-only development setup.
+
+In another terminal, from the repository root:
 
 ```sh
-curl -i http://localhost:8080/health/live
+curl -i http://127.0.0.1:8080/health/live
+curl -i http://127.0.0.1:8080/health/ready
+docker compose stop postgres
+curl -i http://127.0.0.1:8080/health/live
+curl -i http://127.0.0.1:8080/health/ready
+docker compose up -d --wait postgres
+curl -i http://127.0.0.1:8080/health/ready
 ```
 
-Expect HTTP 200, `Content-Type: application/json`, and body `{"status":"ok"}`. This endpoint checks only that the process can respond; it makes no external dependency checks. Stop the server with Ctrl+C (SIGINT); SIGTERM also initiates graceful shutdown, allowing up to 10 seconds for active requests.
+With PostgreSQL available, both endpoints return HTTP 200 and `{"status":"ok"}`. While PostgreSQL is stopped, liveness stays 200 and readiness returns HTTP 503 with `{"status":"unavailable"}`. Each readiness request pings through the shared pool with a one-second context timeout; subsequent requests recover automatically after PostgreSQL returns. To verify initially unavailable startup, stop PostgreSQL before starting Go, then start PostgreSQL while Go stays running.
 
-The optional `HTTP_ADDR` environment variable defaults to `:8080`. For example, to listen only on loopback on another port:
+Both routes are unauthenticated and return JSON. Liveness performs no dependency checks. Stop Go with Ctrl+C (SIGINT); SIGTERM also initiates graceful shutdown with up to 10 seconds for active HTTP requests, followed by pool closure.
 
-```sh
-HTTP_ADDR=127.0.0.1:8081 go run ./cmd/api
-curl -i http://127.0.0.1:8081/health/live
-```
-
-The server reads the process environment directly; it does not load `.env` files. No required configuration or secrets exist for this milestone.
+PostgreSQL data persists in the Compose named volume across stops and container recreation. Use `docker compose stop postgres` to stop it without deleting data. Do not use `docker compose down -v` unless intentionally deleting data. PostgreSQL initialization variables apply only to an empty volume; changing credentials in `.env` does not change an existing database user's password.
 
 Backend validation commands (run from `backend/`):
 
@@ -152,7 +165,7 @@ The full application quick start will be documented when its infrastructure and 
 ## Health checks
 
 - **Go liveness (implemented):** `GET /health/live` confirms the process can respond.
-- **Go readiness (planned):** The backend can reach PostgreSQL and serve requests.
+- **Go readiness (implemented):** `GET /health/ready` checks PostgreSQL reachability with a bounded ping.
 - **Infrastructure health:** Separate checks for APISIX, Keycloak, and PostgreSQL.
 - **Routing check:** A request through APISIX reaches Go.
 - **Authentication check:** A signed-in request reaches a protected Go endpoint, while an unauthenticated API request is rejected.
@@ -187,8 +200,8 @@ Exit criteria:
 - [x] Go liveness responds directly with HTTP 200 and the expected JSON, without authentication or external dependency checks.
 - [x] Backend formatting, vet, test, and build checks pass.
 - [x] The README contains verified backend run and liveness verification commands.
-- [ ] A fresh clone can be configured using the committed template.
-- [ ] Local infrastructure starts using Docker Compose.
+- [x] Local PostgreSQL and Go configuration is documented in the committed template.
+- [x] Local PostgreSQL infrastructure is configured with Docker Compose (remaining services are planned).
 - [ ] React and Go run locally behind APISIX.
 - [ ] Go liveness and readiness checks work through the gateway.
 - [ ] A customer can register and sign in through Keycloak.
