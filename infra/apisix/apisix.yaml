@@ -148,6 +148,9 @@ routes:
       functions:
       - return function() ngx.header["Content-Type"] = "application/json"; ngx.header["Cache-Control"] = "no-store"; ngx.say([[{"authenticated":true}]]);
         return ngx.exit(200) end
+# Rewrite phase priorities: pre-function 10000 > OIDC 2599 > proxy-rewrite 1008.
+# Sanitization precedes OIDC; proxy-rewrite removes only Cookie, preserving the
+# session-generated X-Access-Token. No token is forwarded to Vite or responses.
 # Browser cookies are accepted, but signed-out fetches get 401 rather than redirects.
 - id: backend
   priority: 10
@@ -172,7 +175,7 @@ routes:
       accept_none_alg: false
       accept_unsupported_alg: false
       ssl_verify: true
-      set_access_token_header: false
+      set_access_token_header: true
       set_id_token_header: false
       set_userinfo_header: false
       set_refresh_token_header: false
@@ -230,7 +233,7 @@ routes:
       accept_none_alg: false
       accept_unsupported_alg: false
       ssl_verify: true
-      set_access_token_header: false
+      set_access_token_header: true
       set_id_token_header: false
       set_userinfo_header: false
       set_refresh_token_header: false

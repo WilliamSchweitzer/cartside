@@ -19,11 +19,39 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["http://localhost:9080/auth/callback"],
+      "redirectUris": [
+        "http://localhost:9080/auth/callback"
+      ],
       "webOrigins": [],
       "attributes": {
         "post.logout.redirect.uris": "http://localhost:9080/signed-out"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "cartside-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "cartside-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "cartside-api",
+      "name": "Cartside backend API",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
     }
   ]
 }

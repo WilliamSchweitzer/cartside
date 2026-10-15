@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/WilliamSchweitzer/cartside/backend/internal/auth"
 )
 
 func TestReadiness(t *testing.T) {
@@ -27,7 +29,7 @@ func TestReadiness(t *testing.T) {
 					t.Error("missing short readiness deadline")
 				}
 				return tc.err
-			})
+			}, testVerifier(t).Middleware)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil))
 			if !called || w.Code != tc.code || w.Body.String() != tc.body || w.Header().Get("Content-Type") != "application/json" {
@@ -50,7 +52,7 @@ func TestReadinessRecovery(t *testing.T) {
 			return errors.New("offline")
 		}
 		return nil
-	})
+	}, testVerifier(t).Middleware)
 	for _, code := range []int{503, 200} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil))
@@ -59,4 +61,13 @@ func TestReadinessRecovery(t *testing.T) {
 		}
 		available = true
 	}
+}
+
+func testVerifier(t *testing.T) *auth.Verifier {
+	t.Helper()
+	v, err := auth.New("https://issuer.example", "cartside-api", "https://issuer.example/certs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Business modules, Go identity handling, CI, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. Business modules, resource authorization, CI, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -51,15 +51,15 @@ The incoming application routes and internal AI route have separate policies, in
 
 ### Authentication and access
 
-APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go identity handling and per-customer authorization are a later milestone; Go currently serves health checks only.
+APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go independently verifies the access token forwarded by APISIX and serves the current identity. Per-customer resource authorization remains planned.
 
-The design must prevent forged identity headers and direct access that bypasses gateway authentication. Session configuration and state-changing requests must account for cookie security and CSRF protection. Registration, authentication callbacks, and operational health routes require deliberate routing exceptions.
+Go rejects forged identity headers and verifies signatures and claims independently. A valid access token can authenticate directly to Go; network isolation remains planned. Session configuration and state-changing requests must account for cookie security and CSRF protection. Registration, authentication callbacks, and operational health routes require deliberate routing exceptions.
 
 The AI provider key belongs to APISIX. The internal AI route must require service authentication or internal access restrictions; a storefront session alone does not grant access to it. Per-user AI limits must use a verified identity propagated through the backend.
 
 ## Go backend
 
-The backend will be a modular monolith: one Go application with five internal business modules. Currently, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves health routes. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
+The backend will be a modular monolith: one Go application with five internal business modules. Currently, `internal/auth` verifies access tokens and provides a minimal principal, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves public health and protected current-user routes. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
 
 | Module | Responsibility |
 | --- | --- |
@@ -131,7 +131,7 @@ cd backend
 HTTP_ADDR=0.0.0.0:8080 go run ./cmd/api
 ```
 
-Compose automatically reads the root `.env` for interpolation of PostgreSQL settings; it does not export variables into your shell. Go reads only its process environment and does not load `.env`. The shell commands above export `DATABASE_URL` and the optional `HTTP_ADDR`. Only source a trusted file, using shell-compatible assignments. Alternatively, supply `DATABASE_URL` directly in the Go process environment.
+Compose automatically reads the root `.env` for interpolation of PostgreSQL settings; it does not export variables into your shell. Go reads only its process environment and does not load `.env`. The shell commands above export `DATABASE_URL`, the required `OIDC_*` verification settings, and the optional `HTTP_ADDR`. Only source a trusted file, using shell-compatible assignments. Alternatively, supply `DATABASE_URL` directly in the Go process environment.
 
 `DATABASE_URL` is required and must be a PostgreSQL URL with a host, user, and database name. Missing or malformed configuration fails startup with a generic error. A database connection failure does not prevent startup. `HTTP_ADDR` defaults to `:8080`; the example binds all IPv4 interfaces so APISIX can reach Go. Local `sslmode=disable` is for this host-only development setup.
 
@@ -145,7 +145,7 @@ npm run dev
 
 Vite binds `0.0.0.0:5173` so the APISIX container can reach it. `strictPort` makes startup fail if 5173 is occupied. Open http://localhost:9080, including for HMR; do not use 5173 as the browser origin. Vite explicitly allows `localhost` and `host.docker.internal` (its built-in localhost/IP allowances also apply). The development WebSocket connects to `ws://localhost:9080` and APISIX forwards upgrades to Vite. The frontend route has a one-hour read inactivity timeout for development WebSockets; the API retains its existing timeouts and rewriting. Keep this development server on a trusted machine with inbound firewall restrictions, like Go.
 
-Frontend configuration is committed in `frontend/vite.config.ts`; it needs no environment variables. Compose consumes root `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and the Keycloak/gateway variables documented below; host-run Go consumes `DATABASE_URL` and `HTTP_ADDR`. Compose does not run or configure Vite, and bind-mounted APISIX YAML is not interpolated. Never copy database credentials or other secrets into frontend `.env` files or `VITE_*` variables: those values can enter browser bundles. Changing the Vite port also requires changing the APISIX frontend upstream; changing the gateway address requires updating the WebSocket client address.
+Frontend configuration is committed in `frontend/vite.config.ts`; it needs no environment variables. Compose consumes root `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and the Keycloak/gateway variables documented below; host-run Go consumes `DATABASE_URL`, `HTTP_ADDR`, `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`. Compose does not run or configure Vite, and bind-mounted APISIX YAML is not interpolated. Never copy database credentials or other secrets into frontend `.env` files or `VITE_*` variables: those values can enter browser bundles. Changing the Vite port also requires changing the APISIX frontend upstream; changing the gateway address requires updating the WebSocket client address.
 
 For a production bundle:
 
@@ -295,7 +295,7 @@ APISIX connects to `host.docker.internal:8080`. Compose adds Docker's `host-gate
 
 Docker Desktop normally supplies `host.docker.internal` through its host networking integration; the explicit host-gateway mapping must resolve to a reachable host address in your Desktop installation. Confirm with `docker compose exec apisix cat /etc/hosts` and the gateway requests above. Desktop runs containers inside a VM, so do not assume that a native Linux bridge address exists on the desktop host. If using a remote Docker context, this name refers to the Docker host, not necessarily the machine running Go. Use a local Docker context for this setup.
 
-The gateway port is published only on `127.0.0.1:9080`. Binding Go to `0.0.0.0:8080` also exposes its direct listener on LAN interfaces, subject to the host firewall; use a trusted development machine and restrict inbound access. Gateway routes authenticate browser sessions, but this development topology does **not** prevent direct access to host Go or Vite, or establish trusted identity handling in Go. Address that boundary before trusting gateway-provided identity headers. Stop any existing Go process using port 8080 before changing its listener and restarting it.
+The gateway port is published only on `127.0.0.1:9080`. Binding Go to `0.0.0.0:8080` also exposes its direct listener on LAN interfaces, subject to the host firewall; use a trusted development machine and restrict inbound access. Gateway routes authenticate browser sessions, but this development topology does **not** prevent direct access to host Go or Vite, or enforce gateway-exclusive access. Go verifies access tokens independently and never trusts plain identity headers. Stop any existing Go process using port 8080 before changing its listener and restarting it.
 
 ### Gateway configuration and health
 
@@ -354,7 +354,7 @@ The gateway authentication procedure and remaining security boundaries are docum
 - **Go readiness (implemented):** `GET /health/ready` checks PostgreSQL reachability with a bounded ping.
 - **Infrastructure health:** APISIX control, PostgreSQL, and Keycloak readiness checks are implemented.
 - **Routing check (implemented):** `/api/health/live` and `/api/health/ready` reach Go through APISIX.
-- **Authentication check (implemented):** `/auth/session` verifies the gateway session without calling Go; unauthenticated non-health APIs return 401. Go user identity is not implemented.
+- **Authentication check (implemented):** `/auth/session` verifies the gateway session without calling Go; unauthenticated non-health APIs return 401. Go verifies identity separately at `/api/me`.
 
 Routine health probes do not call a paid AI provider. Healthy individual services do not replace checks of routing and authentication across components.
 
@@ -391,7 +391,7 @@ Exit criteria:
 - [x] React and Go run locally behind APISIX.
 - [x] Go liveness and readiness checks work through the gateway.
 - [x] A customer can register and sign in through Keycloak’s account console and the APISIX-managed application flow.
-- [ ] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
+- [x] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
 - [x] An unauthenticated non-health API request is rejected.
 - [ ] Initial CI checks pass.
 - [ ] The README contains verified setup and verification instructions for the full application.
@@ -412,7 +412,7 @@ Use **http://localhost:9080** consistently. APISIX 3.14.1 uses the existing conf
 
 For an existing checkout, run the secret-generation block above: it now adds `CARTSIDE_SESSION_SECRET` without replacing existing credentials. Generate each secret independently with Python `secrets.token_hex(32)` (32 random bytes, encoded as hex). Do not rotate the existing client secret just to add the session secret. Compose requires both secrets and passes them only to APISIX; `nginx_config.envs` explicitly preserves them in Nginx workers. Plugin fields use supported `$ENV://CARTSIDE_OIDC_CLIENT_SECRET` and `$ENV://CARTSIDE_SESSION_SECRET` references. Mounted YAML is not Compose interpolation. Changing a session secret invalidates existing gateway cookies.
 
-**Existing realms require one client update:** startup import skips them. In the local Keycloak Admin Console, select realm `cartside`, Clients → `cartside-apisix` → Settings → Logout settings. Set Valid post logout redirect URIs to exactly `http://localhost:9080/signed-out` and save. Keep the login redirect exactly `http://localhost:9080/auth/callback`, the existing client secret, and all users. The committed realm template already has these settings for new installations. Do not delete/import over an initialized realm or delete database volumes. Then run:
+**For the gateway-session setup, existing realms require the logout setting below:** startup import skips them. The backend identity milestone also requires the audience reconciliation described below. In the local Keycloak Admin Console, select realm `cartside`, Clients → `cartside-apisix` → Settings → Logout settings. Set Valid post logout redirect URIs to exactly `http://localhost:9080/signed-out` and save. Keep the login redirect exactly `http://localhost:9080/auth/callback`, the existing client secret, and all users. The committed realm template already has these settings for new installations. Do not delete/import over an initialized realm or delete database volumes. Then run:
 
 ```sh
 docker compose config --quiet
@@ -430,7 +430,7 @@ docker compose exec -T apisix apisix test
 | `/auth/logout` | Clears the gateway cookie and redirects to Keycloak's discovered end-session endpoint with ID-token hint and a fixed approved post-logout URL |
 | `/signed-out` | Public gateway HTML, no-store, with an explicit sign-in link; no Vite dependency or automatic login |
 
-Protected routes share identical session secret, cookie path `/`, cookie flags and lifetime. API routes use `bearer_only: false` with `unauth_action: deny`, so the browser cookie works without redirecting fetches to HTML. Incoming Authorization and common token/identity headers are cleared before authentication; token/identity output headers are disabled. Cookies are removed before upstream forwarding, after authentication. Go receives no trusted user identity and `/api/me` is not provided. Only exact health paths bypass authentication; unknown API paths return Go's 404 after login.
+Protected routes share identical session secret, cookie path `/`, cookie flags and lifetime. API routes use `bearer_only: false` with `unauth_action: deny`, so the browser cookie works without redirecting fetches to HTML. Incoming Authorization and common token/identity headers are cleared before authentication; identity output headers are disabled; only backend routes forward the authenticated session access token as X-Access-Token. Cookies are removed before upstream forwarding, after authentication. Go verifies that token independently and exposes minimal verified identity at `/api/me`. Only exact health paths bypass authentication; unknown API paths return Go's 404 after login.
 
 Keycloak discovery is fetched at `http://keycloak:8080/realms/cartside/.well-known/openid-configuration`. Hostname v2 keeps issuer and browser authorization/logout URLs at `http://localhost:8180`, while dynamic backchannel discovery advertises internal token and key URLs. Issuer validation remains enabled. No container needs to reach the host's `localhost:8180`.
 
@@ -442,7 +442,7 @@ APISIX access logging is disabled because default request logs include callback 
 
 Logout always uses the fixed local post-logout URL; query parameters do not select a redirect destination. Keycloak validates its exact redirect allowlist. The public landing page does not automatically start login. Logout is a navigation GET supported by the pinned OIDC library; SameSite=Lax does not itself prevent forced logout.
 
-**CSRF enforcement is a prerequisite for authenticated business mutations.** There are no such endpoints in this milestone. Before adding them, enforce an origin policy and CSRF tokens in addition to resource authorization. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation and verified gateway identity before Go trusts any forwarded identity.
+**CSRF enforcement is a prerequisite for authenticated business mutations.** There are no such endpoints in this milestone. Before adding them, enforce an origin policy and CSRF tokens in addition to resource authorization. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation before claiming gateway-exclusive access; Go already validates forwarded tokens independently.
 
 ### Authentication verification
 
@@ -471,3 +471,80 @@ In a fresh private browser:
 Verified on 2026-10-15 against APISIX 3.14.1 and Keycloak 26.8.1 with initialized volumes: Compose validation/recreation and APISIX configuration test, Nginx forwarding of both secret environment names, successful client-secret exchange and cookie session sharing, fresh-browser redirect, existing-user sign-in, new-user registration through the gateway, callback and protected assets, readiness and Retry, unauthenticated session/API 401, health/landing 200, authenticated session JSON and Go 404, HMR without reload on port 9080, logout of both sessions, credential prompt on subsequent login, and landing reload without a loop. Frontend lint, typecheck and production build passed with Node 24. No Go source changed. Existing users and database volumes were preserved; registration added a local verification user.
 
 Version-matched implementation references: [APISIX OIDC plugin 3.14.1](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/openid-connect.lua), [secret resolution](https://github.com/apache/apisix/blob/3.14.1/apisix/secret.lua), [environment references](https://github.com/apache/apisix/blob/3.14.1/apisix/core/env.lua), [Nginx environment template](https://github.com/apache/apisix/blob/3.14.1/apisix/cli/ngx_tpl.lua), [pinned dependencies](https://github.com/apache/apisix/blob/3.14.1/apisix-master-0.rockspec), [lua-resty-openidc 1.7.6](https://github.com/zmartzone/lua-resty-openidc/blob/v1.7.6/lib/resty/openidc.lua), [lua-resty-session 3.10](https://github.com/bungle/lua-resty-session/blob/v3.10/lib/resty/session.lua), [Keycloak hostname 26.8.1](https://github.com/keycloak/keycloak/blob/26.8.1/docs/guides/server/hostname.adoc), and [Keycloak logout validation 26.8.1](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/endpoints/LogoutEndpoint.java).
+
+## Verified backend identity
+
+Implemented in this milestone: Go independently validates the session access token and serves `GET /me` (`GET /api/me` through APISIX). The response is only `{"subject":"…","issuer":"…"}` with `Cache-Control: no-store`. Missing or invalid credentials produce generic JSON 401 responses. Every Go route except exact GET liveness/readiness paths passes through authentication, including unknown routes and unsupported methods. React uses a relative `/api/me` fetch and displays loading, identity, renewal-required/401, and service-failure states. Renewal is explicit navigation through logout and the signed-out sign-in link; fetches never trigger a redirect loop.
+
+### Configuration and existing realms
+
+Add these values to an existing ignored `.env` before starting the new Go binary (they are already in the template for new checkouts):
+
+```sh
+OIDC_ISSUER=http://localhost:8180/realms/cartside
+OIDC_AUDIENCE=cartside-api
+OIDC_JWKS_URL=http://localhost:8180/realms/cartside/protocol/openid-connect/certs
+```
+
+All three are required at Go startup. The issuer is the exact token identity, including scheme/host/path; the independently configured JWKS URL is a reachable transport endpoint. Host-run Go reaches Keycloak via localhost:8180; APISIX still uses Compose DNS. Neither issuer nor audience validation is disabled. Configuration validation performs no network calls. Liveness remains process-only and readiness remains PostgreSQL-only, including during a Keycloak outage.
+
+Fresh imports define a bearer-only `cartside-api` client and an `oidc-audience-mapper` on `cartside-apisix`, with `included.client.audience=cartside-api`, access-token inclusion enabled and ID-token inclusion disabled. This explicit mapper adds the backend audience without requiring a browser-requested optional scope. The API client has no browser login, password grant, or service-account flow.
+
+Startup import does not modify an existing realm. Apply the same configuration with the committed, idempotent Admin REST reconciliation script, using the existing local administrator credentials:
+
+```sh
+# From the repository root; source only your trusted local file.
+set -a
+. ./.env
+set +a
+python3 infra/keycloak/reconcile-audience.py
+# Safe to repeat. Does not delete realms, users, or volumes, or rotate secrets.
+docker compose config --quiet
+docker compose up -d --force-recreate --wait apisix
+docker compose exec -T apisix apisix test
+# Restart the host Go process with the exported verification settings.
+```
+
+The script reads the committed realm template, creates/updates only the API client and named gateway audience mapper, and suppresses credentials, tokens, and provider error bodies. It requires Python 3 and a reachable local Keycloak administrator API. Existing access tokens retain their original claims until replaced. **Sign out and sign in again after applying the mapper** to obtain a token with the new audience; an old session can pass `/auth/session` while `/api/me` correctly rejects its old token.
+
+### Trust boundary and verification policy
+
+In APISIX's rewrite phase, `serverless-pre-function` (priority 10000) clears client Authorization, X-Access-Token, X-ID-Token, X-Refresh-Token, X-Userinfo, X-User-ID and X-Forwarded-User headers. `openid-connect` (2599) then authenticates the browser cookie and sets **`X-Access-Token`**, containing only the authenticated session's raw access token, on backend routes. `proxy-rewrite` (1008) removes Cookie and rewrites the path; it preserves this newly generated token. Session-check responses run in `serverless-post-function` (-2000). These priorities were checked in the pinned running image. Frontend and session-check routes keep token output disabled. Header names are case-insensitive. Go consumes only X-Access-Token; it ignores Authorization and all plain identity headers. No upstream echoes credentials, and gateway access logging remains disabled with error logging restricted to `crit`.
+
+Go uses `github.com/coreos/go-oidc/v3` v3.14.1 with an explicit RS256 allowlist, signature verification, exact issuer and backend audience checks, required unexpired expiration and nonempty subject, and validation of `nbf` and `iat` when present. No positive clock-skew allowance is applied by the application; keep clocks synchronized. The reusable remote JWKS set caches keys and fetches again when the signing key changes. HTTP key retrieval has a three-second client timeout, redirects disabled, and verification has a four-second request deadline. A known cached key can verify during an outage; an unverifiable token fails closed. Verification errors and token values are never logged or returned. Only the verified subject and issuer enter the request context.
+
+The durable external identity is **(issuer, subject)**, never email. There is no application user table or migration. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. Future resource authorization must separately decide which carts/orders that caller can access, and must accompany CSRF controls before adding mutations. This milestone adds no authenticated mutations.
+
+Local HTTP, insecure development cookie settings, and reachable host ports remain limitations. **A valid access token can authenticate directly to Go using X-Access-Token.** Network isolation and gateway-exclusive access are not implemented. Direct Vite also remains reachable. Tokens, session cookies and administrator credentials need trusted HTTPS transport and appropriate network controls in deployment. Local JWT validation does not immediately revoke an already issued access token on browser logout; it remains usable until expiration unless a future revocation policy is added. React receives no raw tokens and never stores them; the browser carries APISIX's encrypted HttpOnly session cookie.
+
+### Verification
+
+Unit tests generate local RSA keys and serve local JWKS fixtures; they require no Keycloak. They cover absent/malformed/duplicate tokens, forged plain identity headers, invalid signature, a disallowed algorithm, wrong/missing issuer or audience, expired/missing expiration, missing/empty subject, future/malformed time claims, successful minimal identity, cached keys during outage, key rotation, unavailable keys, protected unknown routes/methods, public health, and invalid startup configuration.
+
+```sh
+cd backend
+gofmt -w cmd internal
+go vet ./...
+go test ./...
+go test -race ./...
+go build ./...
+cd ../frontend
+# Use Node 24 (the project's pinned runtime).
+npm run lint
+npm run typecheck
+npm run build
+cd ..
+docker compose config --quiet
+docker compose exec -T apisix apisix test
+# Signed out: all must return 401, without following redirects.
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9080/api/me
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9080/auth/session
+curl -s -o /dev/null -w '%{http_code}\n' -H 'X-User-ID: forged' -H 'X-Forwarded-User: forged' http://localhost:8080/me
+curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Access-Token: fake' http://localhost:8080/me
+```
+
+In a signed-in browser, fetch `/api/me` with same-origin credentials and check the minimal subject/issuer JSON and no-store header. Repeat with fake Authorization, X-Access-Token and identity headers: the result must remain the authenticated session's identity. Do not print/copy cookies or real tokens. Check `/auth/session`, readiness Retry, logout, and the signed-out landing page as described above. To inspect the identity UI, delay `/api/me`, simulate a 503 then Retry, and simulate a 401; the latter must show explicit return-to-sign-in navigation without automatic redirects.
+
+Verification on 2026-10-15: Go formatting, vet, unit tests/race tests and build; Node 24 frontend lint/typecheck/build; Compose validation, APISIX configuration test and independent health probe; repeated audience reconciliation against the initialized realm; headless Chrome existing-user sign-in, identity UI and minimal no-store `/api/me`, fake client token/header override rejection, signed-out API/session 401, direct forged-identity rejection, public health, gateway session JSON, authenticated unknown-route 404, identity loading/failure/retry/401 UI, and logout with no landing loop and credentials required on next login. No users or volumes were deleted. Runtime outage checks also passed: Go started with Keycloak stopped and both health endpoints returned 200; with PostgreSQL stopped, liveness and APISIX stayed healthy while readiness returned 503; readiness recovered to 200 after restoration. No commit or push was made.
+
+Version-matched official references: [APISIX 3.14.1 OIDC forwarding](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/openid-connect.lua), [pre-function priority](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/serverless-pre-function.lua), [proxy-rewrite priority and phase](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/proxy-rewrite.lua), [Keycloak 26.8.1 audience mapper](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/mappers/AudienceProtocolMapper.java), [Keycloak 26.8.1 Admin REST API](https://www.keycloak.org/docs-api/26.8.1/rest-api/index.html), [go-oidc v3.14.1 verifier](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/verify.go), and [cached JWKS and rotation](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/jwks.go).

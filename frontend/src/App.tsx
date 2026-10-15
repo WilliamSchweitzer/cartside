@@ -1,5 +1,50 @@
 import { useEffect, useState } from 'react'
 
+type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
+
+function SignedInIdentity() {
+  const [identity, setIdentity] = useState<Identity>({ state: 'loading' })
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 8000)
+    let active = true
+    async function load() {
+      try {
+        const response = await fetch('/api/me', { signal: controller.signal, cache: 'no-store' })
+        if (response.status === 401) {
+          if (active) setIdentity({ state: 'expired' })
+          return
+        }
+        if (!response.ok) throw new Error('Identity service unavailable')
+        const body: unknown = await response.json()
+        if (typeof body !== 'object' || body === null || !('subject' in body) ||
+          typeof body.subject !== 'string' || !body.subject || !('issuer' in body) ||
+          typeof body.issuer !== 'string' || !body.issuer) throw new Error('Invalid identity response')
+        if (active) setIdentity({ state: 'ready', subject: body.subject, issuer: body.issuer })
+      } catch {
+        if (active) setIdentity({ state: 'failed' })
+      } finally {
+        window.clearTimeout(timeout)
+      }
+    }
+    void load()
+    return () => { active = false; controller.abort(); window.clearTimeout(timeout) }
+  }, [attempt])
+  return <section aria-labelledby="identity-heading">
+    <h2 id="identity-heading">Signed-in identity</h2>
+    <div role="status" aria-live="polite">
+      {identity.state === 'loading' && <p>Loading identity…</p>}
+      {identity.state === 'ready' && <><p>Subject: {identity.subject}</p><p>Issuer: {identity.issuer}</p></>}
+      {identity.state === 'expired' && <p>Your session has expired or needs renewal. <a href="/auth/logout">Return to sign-in</a></p>}
+      {identity.state === 'failed' && <p>The identity service is unavailable. Please try again.</p>}
+    </div>
+    {identity.state === 'failed' && <button type="button" onClick={() => {
+      setIdentity({ state: 'loading' }); setAttempt(value => value + 1)
+    }}>Retry identity check</button>}
+  </section>
+}
+
 type Readiness = 'loading' | 'ready' | 'unavailable' | 'network-error'
 
 const messages: Record<Readiness, { title: string; detail: string }> = {
@@ -54,6 +99,7 @@ export default function App() {
       <a href="/auth/logout">Sign out</a>
       <p className="intro">A foundation for a simpler grocery shopping experience.</p>
       <p>This first screen checks the connection to the backend. Shopping features are still in development.</p>
+      <SignedInIdentity />
       <section aria-labelledby="readiness-heading">
         <h2 id="readiness-heading">Backend readiness</h2>
         <div role="status" aria-live="polite" aria-atomic="true" className={`status ${readiness}`}>
