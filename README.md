@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, unauthenticated liveness and PostgreSQL readiness, a shared pgx v5 pool, graceful shutdown, and local PostgreSQL plus Apache APISIX in Docker Compose. APISIX forwards `/api/*` to the host-running Go server with the prefix removed. The storefront, business modules, remaining infrastructure, authentication, frontend, CI, and AI integration are planned. Unless stated otherwise, the architecture and scope below describe the intended design.
+Implemented: the Go/Chi server, unauthenticated liveness and PostgreSQL readiness, a shared pgx v5 pool, graceful shutdown, and local PostgreSQL plus Apache APISIX in Docker Compose. APISIX forwards `/api/*` to the host-running Go server with the prefix removed. A minimal React/TypeScript landing screen checks backend readiness through the same gateway. The storefront, business modules, remaining infrastructure, authentication, CI, and AI integration are planned. Unless stated otherwise, the architecture and scope below describe the intended design.
 
 ## MVP
 
@@ -100,9 +100,9 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 ## Local development
 
-React and Go are intended to run directly on the developer's machine. Docker Compose currently runs PostgreSQL and APISIX; Keycloak, React, and remaining services are planned.
+React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL and APISIX. React runs on the host with Vite; Keycloak and remaining services are planned.
 
-The browser will access the application through one APISIX address. Currently APISIX routes only `/api/*` to Go; `/` and other unmatched paths return gateway 404. Routing `/` to React is planned. The setup must account for container-to-host connectivity, React development WebSocket traffic, and a consistent Keycloak issuer URL reachable by both the browser and gateway.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The screen distinguishes loading, ready, unavailable (HTTP failure), and network-error states, with Retry to check again. No shopping or authentication features are implemented.
 
 ### Configuration
 
@@ -114,7 +114,7 @@ The browser will access the application through one APISIX address. Currently AP
 
 ### Setup instructions
 
-The backend runs on the host with Go 1.24 or later; Docker Compose runs PostgreSQL 17.10. From the repository root:
+Use **Node.js 24 LTS** (24.x, including npm) for the frontend and Go 1.24 or later for the backend; Docker Compose runs PostgreSQL 17.10. From the repository root:
 
 ```sh
 cp .env.example .env
@@ -134,6 +134,30 @@ Compose automatically reads the root `.env` for interpolation of PostgreSQL sett
 
 `DATABASE_URL` is required and must be a PostgreSQL URL with a host, user, and database name. Missing or malformed configuration fails startup with a generic error. A database connection failure does not prevent startup. `HTTP_ADDR` defaults to `:8080`; the example binds all IPv4 interfaces so APISIX can reach Go. Local `sslmode=disable` is for this host-only development setup.
 
+In a second terminal, from the repository root (do not source the root `.env` for Vite):
+
+```sh
+cd frontend
+npm ci
+npm run dev
+```
+
+Vite binds `0.0.0.0:5173` so the APISIX container can reach it. `strictPort` makes startup fail if 5173 is occupied. Open http://localhost:9080, including for HMR; do not use 5173 as the browser origin. Vite explicitly allows `localhost` and `host.docker.internal` (its built-in localhost/IP allowances also apply). The development WebSocket connects to `ws://localhost:9080` and APISIX forwards upgrades to Vite. The frontend route has a one-hour read inactivity timeout for development WebSockets; the API retains its existing timeouts and rewriting. Keep this development server on a trusted machine with inbound firewall restrictions, like Go.
+
+Frontend configuration is committed in `frontend/vite.config.ts`; it needs no environment variables. Compose consumes root `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`; host-run Go consumes `DATABASE_URL` and `HTTP_ADDR`. Compose does not run or configure Vite, and bind-mounted APISIX YAML is not interpolated. Never copy database credentials or other secrets into frontend `.env` files or `VITE_*` variables: those values can enter browser bundles. Changing the Vite port also requires changing the APISIX frontend upstream; changing the gateway address requires updating the WebSocket client address.
+
+For a production bundle:
+
+```sh
+cd frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+```
+
+The build writes static files to `frontend/dist/`. Serving that bundle in production is outside this milestone; the current gateway upstream requires the Vite development server.
+
 In another terminal, from the repository root:
 
 ```sh
@@ -144,7 +168,7 @@ docker compose ps
 docker compose exec -T apisix resty -I /usr/local/apisix/deps/share/lua/5.1 /usr/local/apisix/healthcheck.lua
 ```
 
-With PostgreSQL available, both health routes return HTTP 200 and `{"status":"ok"}`. APISIX strips `/api` from the path, preserves query strings, and passes upstream status codes and bodies through. There is no frontend catch-all route: `/`, `/health/live`, and `/api` return gateway 404. `/api/nonexistent` reaches Go and returns Go's 404 body.
+With PostgreSQL available, both health routes return HTTP 200 and `{"status":"ok"}`. APISIX strips `/api` from the path, preserves query strings, and passes upstream status codes and bodies through. The lower-priority frontend catch-all serves `/` and other non-API paths (including bare `/api`); these are not backend health endpoints. `/api/nonexistent` reaches Go and returns Go's 404 body.
 
 ### Container-to-host networking and exposure
 
@@ -156,13 +180,13 @@ The gateway port is published only on `127.0.0.1:9080`. Binding Go to `0.0.0.0:8
 
 ### Gateway configuration and health
 
-`infra/apisix/config.yaml` selects file-driven standalone mode (`deployment.role: data_plane`, `role_data_plane.config_provider: yaml`) and disables the Admin API and TLS listener. `infra/apisix/apisix.yaml` defines the single API route and must retain its final `#END` marker. Both files and the health probe are mounted read-only. There is no etcd, dashboard, Admin API, authentication plugin, or frontend route.
+`infra/apisix/config.yaml` selects file-driven standalone mode (`deployment.role: data_plane`, `role_data_plane.config_provider: yaml`) and disables the Admin API and TLS listener. `infra/apisix/apisix.yaml` defines the higher-priority API route and lower-priority frontend catch-all and must retain its final `#END` marker. Both files and the health probe are mounted read-only. There is no etcd, dashboard, Admin API, or authentication plugin.
 
 The pinned image is `apache/apisix:3.14.1-debian`. Configuration follows the official APISIX 3.14 [deployment modes](https://apisix.apache.org/docs/apisix/3.14/deployment-modes/), [proxy-rewrite](https://apisix.apache.org/docs/apisix/3.14/plugins/proxy-rewrite/), [upstream timeout schema](https://apisix.apache.org/docs/apisix/3.14/admin-api/#upstream), and the [3.14.1 Control API documentation](https://github.com/apache/apisix/blob/3.14.1/docs/en/latest/control-api.md). Connection timeout is 1 second; send and read inactivity timeouts are 5 seconds each. Retries are disabled. These bound stalled upstream operations, rather than setting a total streaming-response deadline.
 
 The image includes `resty` and its HTTP client library (verified); it does not include `curl` or `wget`. The Compose health check uses `resty` with a two-second HTTP timeout to request `/v1/healthcheck` on the container-only control listener, `127.0.0.1:9090`. The probe checks that the control endpoint returns 200; it does not interpret upstream health or call Go. Neither control port 9090 nor Admin port 9180 is published. APISIX can remain healthy when Go is stopped or PostgreSQL is unavailable. Application readiness is checked separately through `/api/health/ready`.
 
-APISIX receives no database credentials or `.env` file. Its committed YAML uses fixed local ports and an upstream address; Compose does not interpolate bind-mounted file contents. Changing `HTTP_ADDR` changes Go only: if changing its port, also update the upstream in `infra/apisix/apisix.yaml`. After configuration changes, use `docker compose up -d --force-recreate --wait apisix` so both startup settings and newly replaced bind-mounted files are loaded.
+The frontend route enables WebSocket upgrades; see the [Vite server options](https://vite.dev/config/server-options) and [APISIX route schema](https://apisix.apache.org/docs/apisix/3.14/admin-api/#route). APISIX receives no database credentials or `.env` file. Its committed YAML uses fixed local ports and an upstream address; Compose does not interpolate bind-mounted file contents. Changing `HTTP_ADDR` changes Go only: if changing its port, also update the upstream in `infra/apisix/apisix.yaml`. After configuration changes, use `docker compose up -d --force-recreate --wait apisix` so both startup settings and newly replaced bind-mounted files are loaded.
 
 ### Outage and configuration verification
 
@@ -193,7 +217,17 @@ go test ./...
 go build ./...
 ```
 
-The full application quick start will be documented when its infrastructure and sign-in flow are implemented.
+Browser verification (with all three processes running):
+
+- Open http://localhost:9080 and confirm “Backend ready”; inspect assets and the HMR WebSocket in browser developer tools: all must use port 9080.
+- Edit visible text in `frontend/src/App.tsx`; confirm it changes without a document reload and without a direct connection to port 5173, then restore the edit.
+- Stop PostgreSQL using `docker compose stop postgres`, click Retry, and confirm “Backend unavailable”. Liveness and the independent APISIX health check must still pass.
+- Restore PostgreSQL with `docker compose up -d --wait postgres`, click Retry, and confirm “Backend ready”. No volume deletion or Go restart is required.
+- In browser developer tools, delay the readiness request to observe loading, or block `/api/health/ready` and click Retry to observe “Network error”. Unblock and retry to recover.
+
+Verified for this milestone with Node 24 and headless Chrome: frontend lint, TypeScript checks, production build, Compose validation, APISIX configuration test, page/assets and API routing through port 9080, HMR without document reload or gateway bypass, all four readiness states, PostgreSQL stop/recovery using Retry, and the independent APISIX probe during the outage. Port contention fails startup at 5173, and an unapproved Host header returns 403. Database volumes are preserved.
+
+The full authenticated application quick start will be documented when sign-in is implemented.
 
 ## Health checks
 
@@ -235,7 +269,7 @@ Exit criteria:
 - [x] The README contains verified backend run and liveness verification commands.
 - [x] Local PostgreSQL and Go configuration is documented in the committed template.
 - [x] Local PostgreSQL and APISIX infrastructure is configured with Docker Compose (remaining services are planned).
-- [ ] React and Go run locally behind APISIX.
+- [x] React and Go run locally behind APISIX.
 - [x] Go liveness and readiness checks work through the gateway.
 - [ ] A customer can register and sign in through Keycloak.
 - [ ] An authenticated request reaches a protected Go endpoint and resolves the user's identity.

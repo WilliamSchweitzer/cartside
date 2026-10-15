@@ -1,0 +1,24 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #203a30;
+  background: #f5f5ef;
+  font-synthesis: none;
+  line-height: 1.6;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 46rem; margin: 10vh auto; padding: 2rem; }
+.eyebrow { font-size: .8rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+h1 { font-size: clamp(3rem, 10vw, 5rem); letter-spacing: -.06em; line-height: 1.1; margin: 1rem 0; }
+.intro { font-size: 1.4rem; }
+section { margin-top: 2.5rem; padding: 1.5rem; background: #fff; border: 1px solid #ccd6ce; border-radius: 1rem; }
+h2 { margin-top: 0; font-size: 1.1rem; }
+.status { border-left: 4px solid #65736c; padding-left: 1rem; }
+.status p { margin-top: .25rem; }
+.ready { border-color: #23734d; }
+.unavailable { border-color: #93600c; }
+.network-error { border-color: #a63232; }
+button { font: inherit; font-weight: 600; padding: .65rem 1rem; background: #184c3b; color: white; border: 0; border-radius: .4rem; cursor: pointer; }
+button:disabled { background: #52625b; cursor: wait; }
+button:focus-visible { outline: 3px solid #98620b; outline-offset: 4px; }
+@media (max-width: 480px) { main { margin-top: 3vh; padding: 1.25rem; } }

@@ -1,6 +1,7 @@
 routes:
   - id: backend
     uri: /api/*
+    priority: 10
     plugins:
       proxy-rewrite:
         regex_uri: ["^/api/(.*)", "/$1"]
@@ -14,4 +15,18 @@ routes:
         connect: 1
         send: 5
         read: 5
+  - id: frontend
+    uri: /*
+    priority: -10
+    enable_websocket: true
+    upstream:
+      type: roundrobin
+      scheme: http
+      nodes:
+        "host.docker.internal:5173": 1
+      retries: 0
+      timeout:
+        connect: 1
+        send: 60
+        read: 3600
 #END
