@@ -1,0 +1,29 @@
+{
+  "realm": "cartside",
+  "enabled": true,
+  "displayName": "Cartside",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "resetPasswordAllowed": false,
+  "sslRequired": "external",
+  "clients": [
+    {
+      "clientId": "cartside-apisix",
+      "name": "Cartside gateway",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${CARTSIDE_OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:9080/auth/callback"],
+      "webOrigins": [],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:9080/"
+      }
+    }
+  ]
+}

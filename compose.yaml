@@ -16,6 +16,52 @@ services:
       retries: 5
       start_period: 10s
 
+  keycloak-db:
+    image: postgres:17.10-bookworm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: /var/run/postgresql
+      PGUSER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      PGDATABASE: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD in .env}
+    volumes:
+      - postgres_socket:/var/run/postgresql
+      - ./infra/keycloak/provision-db.sh:/provision-db.sh:ro
+    entrypoint: ["/bin/sh", "/provision-db.sh"]
+    restart: "no"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1
+    command: ["start-dev", "--import-realm"]
+    depends_on:
+      keycloak-db:
+        condition: service_completed_successfully
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD in .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?Set KEYCLOAK_ADMIN_USERNAME in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      CARTSIDE_OIDC_CLIENT_SECRET: ${CARTSIDE_OIDC_CLIENT_SECRET:?Set CARTSIDE_OIDC_CLIENT_SECRET in .env}
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - ./infra/keycloak/cartside-realm.json:/opt/keycloak/data/import/cartside-realm.json:ro
+      - ./infra/keycloak/healthcheck.sh:/opt/keycloak/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD", "bash", "/opt/keycloak/healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 60s
+
   postgres:
     image: postgres:17.10-bookworm
     environment:
@@ -26,6 +72,7 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_socket:/var/run/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
@@ -34,4 +81,5 @@ services:
       start_period: 5s
 
 volumes:
+  postgres_socket:
   postgres_data:
