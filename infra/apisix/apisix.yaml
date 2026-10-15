@@ -1,0 +1,17 @@
+routes:
+  - id: backend
+    uri: /api/*
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/api/(.*)", "/$1"]
+    upstream:
+      type: roundrobin
+      scheme: http
+      nodes:
+        "host.docker.internal:8080": 1
+      retries: 0
+      timeout:
+        connect: 1
+        send: 5
+        read: 5
+#END

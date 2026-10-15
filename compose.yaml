@@ -1,4 +1,21 @@
 services:
+  apisix:
+    image: apache/apisix:3.14.1-debian
+    ports:
+      - "127.0.0.1:9080:9080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./infra/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./infra/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - ./infra/apisix/healthcheck.lua:/usr/local/apisix/healthcheck.lua:ro
+    healthcheck:
+      test: ["CMD", "resty", "-I", "/usr/local/apisix/deps/share/lua/5.1", "/usr/local/apisix/healthcheck.lua"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
   postgres:
     image: postgres:17.10-bookworm
     environment:

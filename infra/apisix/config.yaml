@@ -1,0 +1,21 @@
+apisix:
+  node_listen: 9080
+  enable_admin: false
+  enable_control: true
+  control:
+    ip: 127.0.0.1
+    port: 9090
+  ssl:
+    enable: false
+
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+nginx_config:
+  worker_processes: 1
+
+plugins:
+  - proxy-rewrite
+stream_plugins: []
