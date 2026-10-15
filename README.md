@@ -387,7 +387,7 @@ Exit criteria:
 - [x] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
 - [x] An unauthenticated non-health API request is rejected.
 - [x] Initial CI checks pass.
-- [ ] Full setup works from a fresh checkout with new secrets and isolated volumes, including registration, sign-in, `/api/me`, logout, and persistence after restart.
+- [x] Full setup works from a fresh checkout with new secrets and isolated volumes, including registration, sign-in, `/api/me`, logout, and persistence after restart.
 
 ### Fresh-checkout verification (2026-10-15)
 
@@ -399,12 +399,12 @@ All five documented ports were occupied by the developer’s running services. T
 
 Remaining manual checklist, on a machine where the documented ports are free:
 
-- [ ] Clone separately; select a unique Compose project (`export COMPOSE_PROJECT_NAME=cartside-fresh-check`), copy the template, and follow Setup instructions with new secrets. Never reuse another checkout’s `.env` or volumes.
-- [ ] Confirm all infrastructure is healthy; start Go and Vite exactly as documented. Verify direct and gateway health routes, APISIX’s independent probe, and signed-out API/session 401 responses.
-- [ ] In a private browser, register and sign in through the gateway. Confirm Backend ready, protected assets/HMR through 9080, `/auth/session`, and minimal no-store `/api/me` matching the displayed identity.
-- [ ] Restart this project’s PostgreSQL and Keycloak, then sign in in a fresh private window with the same customer; confirm the same subject and working readiness.
-- [ ] Sign out, confirm the stable landing page and API/session 401 responses, then confirm a new login requires credentials.
-- [ ] Stop only this checkout’s host processes. From this disposable checkout, remove only its resources with `docker compose -p cartside-fresh-check down -v`, then remove its temporary secrets/checkout.
+- [x] Clone separately; select a unique Compose project (`export COMPOSE_PROJECT_NAME=cartside-fresh-check`), copy the template, and follow Setup instructions with new secrets. Never reuse another checkout’s `.env` or volumes.
+- [x] Confirm all infrastructure is healthy; start Go and Vite exactly as documented. Verify direct and gateway health routes, APISIX’s independent probe, and signed-out API/session 401 responses.
+- [x] In a private browser, register and sign in through the gateway. Confirm Backend ready, protected assets/HMR through 9080, `/auth/session`, and minimal no-store `/api/me` matching the displayed identity.
+- [x] Restart this project’s PostgreSQL and Keycloak, then sign in in a fresh private window with the same customer; confirm the same subject and working readiness.
+- [x] Sign out, confirm the stable landing page and API/session 401 responses, then confirm a new login requires credentials.
+- [x] Stop only this checkout’s host processes. From this disposable checkout, remove only its resources with `docker compose -p cartside-fresh-check down -v`, then remove its temporary secrets/checkout.
 
 ## Later milestones
 
