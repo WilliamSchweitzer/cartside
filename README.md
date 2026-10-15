@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Architecture and MVP scope are defined. Implementation starts with the local development environment and sign-in flow. The features and structure below describe the intended design, not completed functionality.
+The first backend milestone is implemented: a Go/Chi HTTP server with an unauthenticated `GET /health/live` endpoint, configurable listen address, server timeouts, and graceful shutdown. The storefront, business modules, infrastructure, authentication, frontend, CI, and AI integration are planned. Unless stated otherwise, the architecture and scope below describe the intended design.
 
 ## MVP
 
@@ -59,7 +59,7 @@ The AI provider key belongs to APISIX. The internal AI route must require servic
 
 ## Go backend
 
-The backend is a modular monolith: one Go application with five internal modules.
+The backend will be a modular monolith: one Go application with five internal business modules. Currently, only `cmd/api` (process startup and shutdown) and `internal/httpapi` (router and liveness handler) are implemented.
 
 | Module | Responsibility |
 | --- | --- |
@@ -114,12 +114,45 @@ The browser accesses the application through one APISIX address. APISIX routes `
 
 ### Setup instructions
 
-Exact versions, commands, ports, callback URLs, and configuration names will be documented as the Phase 1 environment is implemented and verified. There is not yet a runnable quick start.
+The backend runs on the host with Go 1.24 or later. No infrastructure or authentication is needed for liveness. From the repository root:
+
+```sh
+cd backend
+go run ./cmd/api
+```
+
+In another terminal:
+
+```sh
+curl -i http://localhost:8080/health/live
+```
+
+Expect HTTP 200, `Content-Type: application/json`, and body `{"status":"ok"}`. This endpoint checks only that the process can respond; it makes no external dependency checks. Stop the server with Ctrl+C (SIGINT); SIGTERM also initiates graceful shutdown, allowing up to 10 seconds for active requests.
+
+The optional `HTTP_ADDR` environment variable defaults to `:8080`. For example, to listen only on loopback on another port:
+
+```sh
+HTTP_ADDR=127.0.0.1:8081 go run ./cmd/api
+curl -i http://127.0.0.1:8081/health/live
+```
+
+The server reads the process environment directly; it does not load `.env` files. No required configuration or secrets exist for this milestone.
+
+Backend validation commands (run from `backend/`):
+
+```sh
+gofmt -w cmd internal
+go vet ./...
+go test ./...
+go build ./...
+```
+
+The full application quick start will be documented when its infrastructure and sign-in flow are implemented.
 
 ## Health checks
 
-- **Go liveness:** The process can respond.
-- **Go readiness:** The backend can reach PostgreSQL and serve requests.
+- **Go liveness (implemented):** `GET /health/live` confirms the process can respond.
+- **Go readiness (planned):** The backend can reach PostgreSQL and serve requests.
 - **Infrastructure health:** Separate checks for APISIX, Keycloak, and PostgreSQL.
 - **Routing check:** A request through APISIX reaches Go.
 - **Authentication check:** A signed-in request reaches a protected Go endpoint, while an unauthenticated API request is rejected.
@@ -150,6 +183,10 @@ Implementation order:
 
 Exit criteria:
 
+- [x] Go runs locally with a configurable listen address and graceful shutdown.
+- [x] Go liveness responds directly with HTTP 200 and the expected JSON, without authentication or external dependency checks.
+- [x] Backend formatting, vet, test, and build checks pass.
+- [x] The README contains verified backend run and liveness verification commands.
 - [ ] A fresh clone can be configured using the committed template.
 - [ ] Local infrastructure starts using Docker Compose.
 - [ ] React and Go run locally behind APISIX.
@@ -158,7 +195,7 @@ Exit criteria:
 - [ ] An authenticated request reaches a protected Go endpoint and resolves the user's identity.
 - [ ] An unauthenticated API request is rejected.
 - [ ] Initial CI checks pass.
-- [ ] The README contains verified setup and verification instructions.
+- [ ] The README contains verified setup and verification instructions for the full application.
 
 ## Later milestones
 
