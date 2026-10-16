@@ -11,7 +11,7 @@ import (
 )
 
 // NewRouter constructs the application's HTTP routes.
-func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog) http.Handler {
+func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, carts ...Cart) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		protected := authenticate(next)
@@ -36,6 +36,9 @@ func NewRouter(checkReady func(context.Context) error, authenticate func(http.Ha
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	if len(carts) > 0 {
+		cartRoutes(r, carts[0])
+	}
 	r.Get("/products", listProducts(catalog))
 	r.Get("/products/{id}", getProduct(catalog))
 	r.Get("/me", func(w http.ResponseWriter, r *http.Request) {

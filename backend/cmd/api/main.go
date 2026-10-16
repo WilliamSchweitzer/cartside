@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/WilliamSchweitzer/cartside/backend/internal/auth"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/cart"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/catalog"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/database"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/httpapi"
@@ -41,9 +42,10 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	products := catalog.NewRepository(pool)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware, catalog.NewRepository(pool)),
+		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware, products, cart.NewService(pool, products)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable, read-only grocery storefront, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Cart HTTP endpoints/UI, checkout, other business modules, order authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable, read-only grocery storefront, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. Cart UI, checkout, other business modules, order authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -51,7 +51,7 @@ The incoming application routes and internal AI route have separate policies, in
 
 ### Authentication and access
 
-APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go independently verifies the access token forwarded by APISIX and serves the current identity. Cart operations scope ownership to the verified issuer and subject; cart HTTP endpoints and order authorization remain planned.
+APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go independently verifies the access token forwarded by APISIX and serves the current identity. Cart operations scope ownership to the verified issuer and subject; cart HTTP endpoints enforce this identity; order authorization remains planned.
 
 Go rejects forged identity headers and verifies signatures and claims independently. A valid access token can authenticate directly to Go; network isolation remains planned. Session configuration and state-changing requests must account for cookie security and CSRF protection. Registration, authentication callbacks, and operational health routes require deliberate routing exceptions.
 
@@ -59,7 +59,7 @@ The AI provider key belongs to APISIX. The internal AI route must require servic
 
 ## Go backend
 
-The backend will be a modular monolith: one Go application with five internal business modules. Currently, `internal/auth` verifies access tokens and provides a minimal principal, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves public health, protected current-user, and catalog routes. `internal/catalog` owns the runtime product model and PostgreSQL read repository, independently of the development seed package. `internal/cart` owns persistent user carts, quantity rules, versioning, and current-price totals; it has no HTTP handlers. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
+The backend will be a modular monolith: one Go application with five internal business modules. Currently, `internal/auth` verifies access tokens and provides a minimal principal, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves public health, protected current-user, and catalog routes. `internal/catalog` owns the runtime product model and PostgreSQL read repository, independently of the development seed package. `internal/cart` owns persistent user carts, quantity rules, versioning, and current-price totals; its HTTP adapter lives in `internal/httpapi`. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
 
 | Module | Responsibility |
 | --- | --- |
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. Cart HTTP/UI and checkout remain planned; see the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. Cart UI and checkout remain planned; see the gateway authentication section below.
 
 ### Configuration
 
@@ -452,7 +452,7 @@ APISIX access logging is disabled because default request logs include callback 
 
 Logout always uses the fixed local post-logout URL; query parameters do not select a redirect destination. Keycloak validates its exact redirect allowlist. The public landing page does not automatically start login. Logout is a navigation GET supported by the pinned OIDC library; SameSite=Lax does not itself prevent forced logout.
 
-**CSRF enforcement is a prerequisite for authenticated business mutations.** There are no such endpoints in this milestone. Before adding them, enforce an origin policy and CSRF tokens in addition to resource authorization, validate inputs in Go, and define the application account/ownership model. SameSite cookies alone are insufficient. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation before claiming gateway-exclusive access; Go already validates forwarded tokens independently.
+**Authenticated cart mutations enforce CSRF protection** with a mandatory custom header, no cross-origin CORS permission, and rejection of cross-site Fetch Metadata, as documented below. Go also validates inputs and scopes ownership to the verified principal. SameSite cookies alone are insufficient. State/nonce protect the login flow, not application mutations. Host ports 8080 and 5173 remain reachable directly, bypassing the gateway. Restrict host firewall access in development; establish network isolation before claiming gateway-exclusive access; Go already validates forwarded tokens independently.
 
 ### Authentication verification
 
@@ -521,7 +521,7 @@ In APISIX's rewrite phase, `serverless-pre-function` (priority 10000) clears cli
 
 Go uses `github.com/coreos/go-oidc/v3` v3.14.1 with an explicit RS256 allowlist, signature verification, exact issuer and backend audience checks, required unexpired expiration and nonempty subject, and validation of `nbf` and `iat` when present. No positive clock-skew allowance is applied by the application; keep clocks synchronized. The reusable remote JWKS set caches keys and fetches again when the signing key changes. HTTP key retrieval has a three-second client timeout, redirects disabled, and verification has a four-second request deadline. A known cached key can verify during an outage; an unverifiable token fails closed. Verification errors and token values are never logged or returned. Only the verified subject and issuer enter the request context.
 
-The durable external identity is **(issuer, subject)**, never email. There is no application user table; catalog schema migrations are separate from identity. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. The cart module now scopes all operations to this verified principal; order authorization remains planned. HTTP mutations must also receive CSRF protection before cart endpoints are added. There are currently no cart HTTP mutations.
+The durable external identity is **(issuer, subject)**, never email. There is no application user table; catalog schema migrations are separate from identity. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. The cart module now scopes all operations to this verified principal; order authorization remains planned. Cart HTTP mutations now require the CSRF header documented below.
 
 Local HTTP, insecure development cookie settings, and reachable host ports remain limitations. **A valid access token can authenticate directly to Go using X-Access-Token.** Network isolation and gateway-exclusive access are not implemented. Direct Vite also remains reachable. Tokens, session cookies and administrator credentials need trusted HTTPS transport and appropriate network controls in deployment. Local JWT validation does not immediately revoke an already issued access token on browser logout; it remains usable until expiration unless a future revocation policy is added. React receives no raw tokens and never stores them; the browser carries APISIX's encrypted HttpOnly session cookie.
 
@@ -797,8 +797,9 @@ shared pgx pool. `Get(ctx)`, `Add(ctx, productID, quantity)`,
 `SetQuantity(ctx, productID, quantity)`, and `Remove(ctx, productID)` obtain their
 owner solely from `auth.FromContext(ctx)`. The context must come from the existing
 access-token verifier. No operation accepts owner strings, email, or an arbitrary
-cart ID. There are no application user records, cart HTTP endpoints, frontend
-controls, checkout operations, or automatic mutation retries in this milestone.
+cart ID. This persistence milestone added no application user records, frontend
+controls, checkout operations, or automatic mutation retries. The next milestone
+adds the cart HTTP adapter documented below.
 Mutation methods return an error; read the cart separately to obtain its current
 representation, which may include intervening concurrent changes.
 
@@ -865,9 +866,9 @@ framework was added.
 
 Domain sentinels are `cart.ErrUnauthenticated`, `ErrInvalidProductID`, `ErrQuantity`,
 `ErrUnavailable`, `ErrItemNotFound`, and `ErrTotalOverflow`. Missing products retain
-`catalog.ErrNotFound`; wrapped errors support `errors.Is` for future HTTP mapping.
+`catalog.ErrNotFound`; wrapped errors support `errors.Is` for HTTP mapping.
 Operational database errors remain errors rather than being reported as domain
-not-found failures. HTTP mapping and CSRF controls are future work.
+not-found failures. The HTTP adapter maps these errors as documented below.
 
 Verification from `backend/`:
 
@@ -896,6 +897,50 @@ integration suites documented above; all suites leave test data behind.
 
 Local checks passed formatting, vet, default unit/race tests, build, and all three
 explicit PostgreSQL 17.10 integration suites (cart, catalog, and catalogseed).
-Frontend checks and APISIX cart checks do not apply: no frontend code or HTTP
-routes changed. No developer records, volumes, identity-provider configuration,
+These historical persistence checks preceded the cart HTTP milestone. No developer records, volumes, identity-provider configuration,
 or running application processes were changed. Nothing was committed or pushed.
+
+### Authenticated cart HTTP API
+
+APISIX exposes the following routes, stripping `/api` before forwarding to Go.
+All require a gateway session and independently verified access token in Go.
+Ownership comes exclusively from the verified request context.
+
+| Method | Path | Request | Success |
+| --- | --- | --- | --- |
+| GET | `/api/cart` | None | 200, current cart |
+| POST | `/api/cart/items` | `{"product_id":"UUID","quantity":1}` | 204, increment |
+| PUT | `/api/cart/items/{product_id}` | `{"quantity":2}` | 204, set existing item |
+| DELETE | `/api/cart/items/{product_id}` | None | 204, including repeated removal |
+
+GET returns `{"version":0,"items":[],"subtotal_cents":0,"currency":"USD"}`
+for an empty cart. Each item contains `product` (the catalog representation),
+`quantity`, and `line_total_cents`. Prices and totals use integer cents and current
+catalog prices. All cart responses use `Cache-Control: no-store`.
+
+Mutations require `X-CSRF-Protection: 1`. Browser fetches use relative URLs,
+for example `fetch('/api/cart/items', {method: 'POST', headers:
+{'Content-Type': 'application/json', 'X-CSRF-Protection': '1'}, body:
+JSON.stringify({product_id: selectedProduct.id, quantity: 1})})`.
+This custom header cannot be sent by cross-origin browser code without a CORS
+preflight. Neither Go nor APISIX enables CORS. Do not add cross-origin permission
+for these authenticated routes without revisiting CSRF protection. Mutations
+also reject `Sec-Fetch-Site: cross-site`; absence of this browser header does not
+bypass the mandatory custom header. APISIX forwards the custom header and Fetch
+Metadata headers with its existing API route; it removes browser cookies before
+Go and forwards only the gateway-generated access token. No gateway route change
+is needed. Existing upstream `retries: 0` remains in effect.
+
+POST/PUT require `application/json` (media type parameters are allowed), at most
+4096 body bytes, exact field names, a canonical hyphenated UUID, and integer
+quantities 1–99. Missing, null, unknown, duplicate (including escaped equivalent
+names), and trailing JSON fields/values are rejected. PUT accepts only quantity.
+Successful mutations return an empty 204 directly from the operation result;
+clients fetch GET afterward. **POST increments are not safe to retry
+automatically**, including after an ambiguous network failure or failed GET.
+
+Errors use `{"error":"message"}`: 400 invalid input/quantity, 401 missing or
+invalid authentication, 403 failed CSRF checks, 404 missing product or existing
+cart item, 409 unavailable product for an increase, 413 oversized body, 415 wrong
+media type, and 503 operational failure. Internal error details are not exposed.
+Cart UI and checkout remain planned.
