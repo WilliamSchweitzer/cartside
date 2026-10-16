@@ -45,7 +45,7 @@ func TestCatalogLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 2 {
+	if err != nil || len(results) != 3 {
 		t.Fatalf("initial migration: %v, %v", results, err)
 	}
 	results, err = provider.Up(ctx)
@@ -88,6 +88,11 @@ func TestCatalogLifecycle(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT price_cents,available FROM products WHERE id=$1`, products[0].ID).Scan(&price, &available); err != nil || price != 12345 || available {
 		t.Fatalf("edits not preserved: %d %v %v", price, available, err)
 	}
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The newest migration owns only cart tables; catalog data must survive.
+	count(101)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}

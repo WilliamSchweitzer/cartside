@@ -124,7 +124,7 @@ func TestPostgresCatalog(t *testing.T) {
 
 func testFixtureSearch(t *testing.T, ctx context.Context, repo *Repository) {
 	t.Helper()
-	if _, err := repo.pool.Exec(ctx, "TRUNCATE products"); err != nil {
+	if _, err := repo.pool.Exec(ctx, "DELETE FROM products"); err != nil {
 		t.Fatal(err)
 	}
 	products, err := catalogseed.Load()

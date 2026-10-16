@@ -1,4 +1,4 @@
-// Package migrations contains the versioned catalog schema, separate from development data.
+// Package migrations contains the versioned application schema, separate from development data.
 package migrations
 
 import (

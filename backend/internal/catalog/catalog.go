@@ -116,3 +116,23 @@ func (r *Repository) Get(ctx context.Context, id string) (Product, error) {
 	}
 	return p, err
 }
+
+// GetInTx reads authoritative product data within the caller's snapshot. It lets
+// other modules read catalog data without querying catalog tables themselves.
+func (r *Repository) GetInTx(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
+	return transactionProduct(tx.QueryRow(ctx, "SELECT "+columns+" FROM products WHERE id=$1", id))
+}
+
+// GetForShare holds the product against updates/deletion until the transaction
+// ends. Cart mutations lock their cart row first, then check availability here.
+func (r *Repository) GetForShare(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
+	return transactionProduct(tx.QueryRow(ctx, "SELECT "+columns+" FROM products WHERE id=$1 FOR SHARE", id))
+}
+
+func transactionProduct(row pgx.Row) (Product, error) {
+	p, err := scan(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Product{}, ErrNotFound
+	}
+	return p, err
+}
