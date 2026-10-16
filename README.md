@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. Checkout/order HTTP endpoints and UI, order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint is implemented; checkout UI, order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; checkout HTTP endpoints and UI remain planned. See the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; the checkout API is implemented; checkout UI remains planned. See the gateway authentication section below.
 
 ### Configuration
 
@@ -410,7 +410,7 @@ Remaining manual checklist, on a machine where the documented ports are free:
 ## Later milestones
 
 - Add AI suggestions and explicit customer acceptance.
-- Expose the implemented simulated checkout operations through authenticated HTTP and UI milestones.
+- Build the React review screen using the implemented authenticated checkout API.
 - Prepare deployment and managed secret delivery.
 
 Building a custom Go OIDC provider is a potential separate learning milestone after the application works with Keycloak.
@@ -979,7 +979,7 @@ Errors use `{"error":"message"}`: 400 invalid input/quantity, 401 missing or
 invalid authentication, 403 failed CSRF checks, 404 missing product or existing
 cart item, 409 unavailable product for an increase, 413 oversized body, 415 wrong
 media type, and 503 operational failure. Internal error details are not exposed.
-The cart UI is implemented below; checkout HTTP endpoints and UI remain planned.
+The cart UI is implemented below; the checkout API is implemented; checkout UI remains planned.
 
 
 ## Storefront cart milestone (implemented)
@@ -1077,9 +1077,9 @@ remains unperformed; the automated failure-path coverage above still applies.
 
 ### Simulated checkout operations
 
-`internal/orders.Service.Checkout` is a Go operation only. Migration
-`00004_orders.sql` adds simulated orders and immutable item snapshots; there are
-no order/checkout HTTP routes or frontend changes. No payment, tax, shipping,
+`internal/orders.Service.Checkout` is exposed through the authenticated checkout
+HTTP adapter documented below. Migration `00004_orders.sql` adds simulated
+orders and immutable item snapshots. No checkout UI is implemented. No payment, tax, shipping,
 delivery, inventory reservation, AI, or idempotency expiry/cleanup is implemented.
 Apply migrations with the existing `go run ./cmd/migrate up` command.
 
@@ -1102,8 +1102,8 @@ issuer, subject, and key, then locks the owner's existing cart FOR UPDATE and
 rechecks the key. It rejects missing/empty carts, stale versions, mismatched
 membership/quantities, unavailable products, and changed prices. Product rows
 are locked FOR SHARE in ascending UUID order until commit. Order/item inserts,
-cart clearing, and exactly one cart-version increment commit atomically. Any
-failure rolls back the whole transaction; independent one-second rollback cleanup
+cart clearing, and exactly one cart-version increment commit atomically. Failures before commit roll back the whole transaction; a commit error may leave
+the outcome unknown. Independent one-second rollback cleanup
 releases locks even after cancellation. Cart mutations retain their existing API
 and use the same cart-before-product lock order.
 
@@ -1151,4 +1151,121 @@ and all four explicit integration packages (orders, cart, catalog, catalogseed)
 with the race detector against separate fresh databases in a disposable
 PostgreSQL 17.10 container on an ephemeral loopback port. Developer databases,
 volumes, and application services were untouched. No HTTP/frontend changes,
+commit, push, or deployment were performed.
+
+
+### Simulated checkout API (React review-screen contract)
+
+`POST /api/checkout` through APISIX reaches `POST /checkout` in Go. Use the
+existing browser session, `Content-Type: application/json`,
+`X-CSRF-Protection: 1`, and exactly one `Idempotency-Key` header. The browser
+supplies its same-origin `Origin`; if `Sec-Fetch-Site` is present it must be
+`same-origin`. Go requires the gateway-forwarded, independently verified token;
+never supply owner identity in the body. APISIX forwards the idempotency header
+unchanged and retains `retries: 0`.
+
+The client creates and retains an opaque, case-sensitive key for each reviewed
+checkout attempt: 1–128 printable ASCII characters, excluding whitespace.
+The server neither creates keys nor retries checkout automatically. Submit the
+version and complete item list from the customer's review, with integer values:
+
+```json
+{
+  "expected_cart_version": 3,
+  "items": [
+    {"product_id": "bb5ce88f-908c-5a99-8ae7-90b60b00ae1b", "quantity": 2, "unit_price_cents": 399}
+  ]
+}
+```
+
+Version and cents are nonnegative signed 64-bit integers; quantities are 1–99.
+The list must be nonempty and product UUIDs unique after canonicalization.
+All fields are required and non-null. Unknown/duplicate fields at either object
+level, fractions/exponents, strings in numeric fields, overflow, malformed UUIDs,
+and trailing JSON are rejected. Integers are decoded directly without floating
+point. The body limit is **16 MiB**, including whitespace; there is no item-count
+cap. This is a transport byte limit, not a cart business rule; requests exceeding
+it must be reduced in encoding size or the transport limit raised, never split
+into partial checkouts. The orders service remains authoritative for validation.
+
+Both initial completion and successful replay return **200**,
+`Content-Type: application/json`, and `Cache-Control: no-store`:
+
+```json
+{
+  "id": "d550df71-4280-480b-a733-1ee7e24c1ab5",
+  "confirmation": "SIM-example",
+  "kind": "simulated",
+  "created_at": "2026-10-15T12:00:00Z",
+  "currency": "USD",
+  "total_cents": 798,
+  "items": [
+    {
+      "product_id": "bb5ce88f-908c-5a99-8ae7-90b60b00ae1b",
+      "name": "Apples",
+      "package_label": "bag",
+      "quantity": 2,
+      "unit_price_cents": 399,
+      "line_total_cents": 798
+    }
+  ]
+}
+```
+
+`created_at` uses RFC3339. Items are immutable catalog snapshots in product-UUID
+order. The response excludes owner identity, keys, fingerprints, and tokens.
+Checkout returns the order directly; it does not require a follow-up cart read.
+After success the UI can display this confirmation and clear its local cart;
+a later cart refresh is independent of checkout success.
+
+Checkout handler errors use `{"code":"prices_changed","message":"Prices changed; review the cart again."}`
+with safe messages and `Cache-Control: no-store`. Codes are stable; do not branch
+on message text.
+
+| HTTP | Code | Meaning/action |
+| --- | --- | --- |
+| 400 | `invalid_input` | Invalid headers/body, body too large, or numeric overflow; correct the request. |
+| 401 | `unauthorized` | Verified authentication required. |
+| 409 | `empty_cart` | No items to check out. |
+| 409 | `stale_cart_version` | Cart changed; review again. |
+| 409 | `reviewed_items_mismatch` | Reviewed membership/quantities differ; review again. |
+| 409 | `products_unavailable` | A reviewed product is missing or unavailable. |
+| 409 | `prices_changed` | A reviewed price changed; review again. |
+| 409 | `idempotency_conflict` | Successful key reused with different canonical input. |
+| 503 | `checkout_unavailable` | Storage/dependency failure or cancellation; outcome may be unknown. |
+| 504 | `checkout_timeout` | Deadline exceeded; outcome may be unknown. |
+
+Shared CSRF middleware retains its existing **403** JSON
+`{"error":"CSRF protection required"}`. APISIX session rejections and gateway
+errors retain their existing responses; clients must also handle non-contract
+responses, connection loss, and gateway timeouts.
+
+**Safe retries:** retain the exact same key and original body after a timeout,
+connection loss, 503/504, or any uncertain outcome. Do not assume an error means
+rollback, clear the cart optimistically on error, or generate a replacement key
+to resolve an uncertain result. A successful retry returns the original order,
+even if the cart was cleared or changed meanwhile. Retry is user-driven, not
+automatic. After a definitive review conflict, refresh/review the cart and obtain
+explicit customer acceptance before starting a new attempt with a new key.
+Never send the old successful key with newly reviewed input.
+
+Handler integration tests use their own empty disposable database:
+
+```sh
+CARTSIDE_TEST_DATABASE_URL='postgres://test_user:disposable_password@127.0.0.1:TEST_PORT/checkout_http_test?sslmode=disable' \
+  go test -tags=integration -race ./internal/httpapi -run TestPostgresCheckoutHTTP -count=1 -v
+```
+
+
+Checkout API verification (2026-10-15): formatting, vet, unit tests, race tests,
+and build passed. All five explicit integration suites (orders, cart, catalog,
+catalogseed, checkout HTTP) passed with the race detector, each using a separate
+fresh database in a disposable PostgreSQL 17.10 container. JSON/YAML parsing,
+Compose validation, and APISIX configuration tests passed. A headless Chrome
+session through a separate APISIX/Keycloak stack verified real sign-in, 401 and
+403 enforcement, checkout 200 and identical replay, changed-body/key conflict,
+price-failure cart preservation, exactly one cart clearing/version increment,
+and public health checks. An opaque mixed-case key containing a comma passed
+through unchanged. Test resources were removed; developer services, users,
+configuration, databases, and volumes were preserved. No frontend changes,
 commit, push, or deployment were performed.

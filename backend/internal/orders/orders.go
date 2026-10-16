@@ -71,6 +71,12 @@ func NewService(pool *pgxpool.Pool, carts *cart.Service, products *catalog.Repos
 	return &Service{pool, carts, products}
 }
 
+// ValidateInput applies the same authoritative validation used by Checkout.
+func ValidateInput(in CheckoutInput) error {
+	_, _, err := canonical(in)
+	return err
+}
+
 func canonical(in CheckoutInput) (CheckoutInput, []byte, error) {
 	if len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 128 || in.ExpectedCartVersion < 0 || len(in.Items) == 0 {
 		return in, nil, ErrInvalidInput

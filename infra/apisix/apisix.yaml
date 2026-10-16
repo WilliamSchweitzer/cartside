@@ -151,7 +151,7 @@ routes:
 # Rewrite phase priorities: pre-function 10000 > OIDC 2599 > proxy-rewrite 1008.
 # Sanitization precedes OIDC; proxy-rewrite removes only Cookie, preserving the
 # session-generated X-Access-Token. No token is forwarded to Vite or responses.
-# Preserve browser Origin, X-CSRF-Protection, and Sec-Fetch-Site unchanged.
+# Preserve browser Origin, X-CSRF-Protection, Sec-Fetch-Site, and Idempotency-Key unchanged.
 # Never set/add these headers: Go must validate what the browser actually sent.
 # Browser cookies are accepted, but signed-out fetches get 401 rather than redirects.
 - id: backend
