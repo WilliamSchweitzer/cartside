@@ -1047,6 +1047,30 @@ cart protection used the real services. The authenticated running backend return
 404 for `/api/cart`; live add/update/remove persistence and two-user ownership
 checks could not be verified. Existing processes, developer records, and volumes
 were preserved; no migrations or seeds were run. Only new verification accounts
-were registered. Complete those live cart checks after restarting the updated Go
-server with the existing cart migration applied. Screen-reader announcement
+were registered. Those live cart checks were subsequently completed as recorded below. Screen-reader announcement
 behavior has automated markup coverage, but was not tested with a screen reader.
+
+
+### Live cart verification follow-up (2026-10-15)
+
+The authenticated 404 came from `/tmp/cartside-search-api-final`, an older Go
+binary without cart routes. The local database also lacked migration 3, and the
+local `.env` lacked `BROWSER_ORIGIN` and the OIDC settings previously supplied
+separately to the process. Added the documented non-secret origin/OIDC settings
+without replacing secrets, applied the single pending migration 3, and gracefully
+replaced the old backend with a binary built from the current checkout. Gateway
+readiness and authenticated GET `/api/cart` now return 200. Existing products,
+developer records, and persistent volumes were preserved; no seed or reset ran.
+
+Headless Chrome through real APISIX/Keycloak/Go/PostgreSQL, without mocked cart
+responses, passed keyboard addition and absolute quantity update, removal, cart
+persistence across page reload, submitted-search preservation during mutations,
+375px/1280px layouts without horizontal overflow, and logout followed by cart 401.
+Two additional newly registered isolated accounts verified independent carts:
+account B could not update account A's item (404), removing B's absent item did
+not affect A, and both accounts held different quantities of the same product.
+A browser mutation without the custom CSRF header returned 403 and left the cart
+unchanged. Verification cart items were removed and the accounts signed out;
+new test identities and their empty carts remain. No developer cart was used.
+The live persistence/ownership verification gap is resolved. Screen-reader testing
+remains unperformed; the automated failure-path coverage above still applies.
