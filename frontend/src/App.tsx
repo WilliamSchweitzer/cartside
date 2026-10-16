@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import Catalog from './Catalog'
+import Cart from './Cart'
+import { useCart } from './useCart'
 
 type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
 
@@ -55,6 +57,7 @@ const messages: Record<Readiness, { title: string; detail: string }> = {
 }
 
 export default function App() {
+  const cart = useCart()
   const [readiness, setReadiness] = useState<Readiness>('loading')
   const [attempt, setAttempt] = useState(0)
 
@@ -102,9 +105,11 @@ export default function App() {
         <p className="eyebrow">Your neighborhood essentials</p>
         <h1>A fresh look at<br />everyday groceries.</h1>
         <p>Browse the shelves and find your favorites.</p>
-        <p className="browse-note">Browse-only preview · Shopping and checkout are coming later.</p>
+        <p className="browse-note">Build your grocery cart below.</p>
       </div>
-      <Catalog />
+      <a href="#cart">Go to your cart</a>
+      <Catalog cart={cart} />
+      <Cart state={cart} />
       <details className="diagnostics">
         <summary>Service diagnostics</summary>
       <section aria-labelledby="readiness-heading">

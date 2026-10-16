@@ -1,31 +1,27 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
-type Product = {
-  id: string; name: string; package_label: string; image_reference: string
-  price_cents: number; currency: 'USD'; category: string; available: boolean
-}
+import { validProduct, usd } from './products'
+import type { Product } from './products'
+import type { CartState } from './useCart'
+
 type Page = { items: Product[]; limit: number; offset: number; has_more: boolean }
 type Result = { state: 'loading' | 'failed' | 'expired' } | { state: 'ready'; page: Page }
-const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 const fallback = '/images/products/fallback.svg'
 
 function validPage(value: unknown, offset: number): value is Page {
   if (typeof value !== 'object' || value === null) return false
   const page = value as Page
   return page.limit === 20 && page.offset === offset && typeof page.has_more === 'boolean' &&
-    Array.isArray(page.items) && page.items.length <= 20 && page.items.every(p =>
-      p && typeof p.id === 'string' && typeof p.name === 'string' &&
-      typeof p.package_label === 'string' && typeof p.image_reference === 'string' &&
-      typeof p.category === 'string' && typeof p.available === 'boolean' &&
-      p.currency === 'USD' && Number.isInteger(p.price_cents) && p.price_cents >= 0)
+    Array.isArray(page.items) && page.items.length <= 20 && page.items.every(validProduct)
 }
 
-function ProductCard({ product }: { product: Product }) {
+function ProductCard({ product, cart }: { product: Product; cart: CartState }) {
   // Only local product assets are loaded, including for developer-edited records.
   const source = /^\/images\/products\/[a-zA-Z0-9_-]+\.(svg|png|webp|jpg)$/.test(product.image_reference)
     ? product.image_reference : fallback
   const [brokenSource, setBrokenSource] = useState<string | null>(null)
+  const cartItem = cart.cart?.items.find(item => item.product.id === product.id)
   return <li className="product-card">
     <div className="product-image"><img src={brokenSource === source ? fallback : source}
       alt="" loading="lazy" onError={() => setBrokenSource(source)} /></div>
@@ -37,11 +33,13 @@ function ProductCard({ product }: { product: Product }) {
       <p className={`availability ${product.available ? '' : 'unavailable'}`}>
         {product.available ? 'Available' : 'Currently unavailable'}
       </p>
+      <button type="button" className="add-to-cart" disabled={!product.available || cart.busy || cart.blocked || cartItem?.product.available === false || (cartItem?.quantity ?? 0) >= 99}
+        aria-label={`Add ${product.name} to cart`} onClick={() => void cart.mutate('POST', product.id, product.name, 1)}>Add to cart</button>
     </div>
   </li>
 }
 
-export default function Catalog() {
+export default function Catalog({ cart }: { cart: CartState }) {
   const [draft, setDraft] = useState('')
   const [request, setRequest] = useState({ query: '', offset: 0, attempt: 0 })
   const [result, setResult] = useState<Result>({ state: 'loading' })
@@ -115,7 +113,7 @@ export default function Catalog() {
     </div>
     {result.state === 'failed' && <button onClick={() => browse(request.query, request.offset)}>Retry catalog</button>}
     {result.state === 'ready' && <>
-      <ul className="product-grid">{result.page.items.map(product => <ProductCard key={product.id} product={product} />)}</ul>
+      <ul className="product-grid">{result.page.items.map(product => <ProductCard key={product.id} product={product} cart={cart} />)}</ul>
       <nav className="pagination" aria-label="Catalog pages">
         <button className="secondary" disabled={request.offset === 0} onClick={() => browse(request.query, Math.max(0, request.offset - 20))}>Previous</button>
         <span>Page {request.offset / 20 + 1}</span>

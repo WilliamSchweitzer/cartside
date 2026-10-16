@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable, read-only grocery storefront, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. Cart UI, checkout, other business modules, order authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Checkout, other business modules, order authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. Cart UI and checkout remain planned; see the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; checkout remains planned. See the gateway authentication section below.
 
 ### Configuration
 
@@ -173,6 +173,7 @@ cd frontend
 npm ci
 npm run lint
 npm run typecheck
+npm test
 npm run build
 ```
 
@@ -356,7 +357,7 @@ Routine health probes do not call a paid AI provider. Healthy individual service
 `.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual dispatch. Independent **Backend**, **Frontend**, and **Configuration** jobs use read-only repository permissions and cancel superseded runs for the same PR or branch. Official actions are pinned to full commit SHAs with release comments; update both together.
 
 - Backend: non-mutating formatting check, vet, race tests, and build. Go comes from `backend/go.mod`; dependencies are cached against `backend/go.sum`. Tests use local fixtures and need no PostgreSQL, Keycloak, credentials, or repository secrets.
-- Frontend: Node comes from `frontend/package.json`; npm caches against `frontend/package-lock.json`. Runs `npm ci`, lint, typecheck, and production build. There is no frontend test suite yet.
+- Frontend: Node comes from `frontend/package.json`; npm caches against `frontend/package-lock.json`. Runs `npm ci`, lint, typecheck, Vitest frontend tests (`npm test`), and production build.
 - Configuration: Python 3.13 and pinned PyYAML parse tracked JSON/YAML; Compose validates with disposable values for every required variable and `config --quiet`. No rendered credentials are printed. Parsing does not prove runtime APISIX schemas, routing, or OIDC behavior; CI does not start the identity stack.
 
 GitHub-hosted Ubuntu runners provide Docker Compose and the C compiler needed for race tests. Local checks require the Go/Node versions above, Python 3 (install `scripts/requirements-ci.txt` in a virtual environment for configuration parsing), and Docker Engine/Desktop with Compose v2 and a local context. GitHub Actions must be enabled in repository settings; no repository secrets are needed. Confirm all three jobs after pushing; a local pass is not a remote CI pass. Deployment and artifact publishing remain future work.
@@ -408,8 +409,6 @@ Remaining manual checklist, on a machine where the documented ports are free:
 
 ## Later milestones
 
-- Add catalog HTTP endpoints, search, and UI (schema and development fixtures are implemented).
-- Expose the implemented user-owned cart operations through authenticated HTTP endpoints and a cart UI.
 - Add AI suggestions and explicit customer acceptance.
 - Implement simulated checkout and retry protections.
 - Prepare deployment and managed secret delivery.
@@ -540,6 +539,7 @@ cd ../frontend
 # Use Node 24 (the project's pinned runtime).
 npm run lint
 npm run typecheck
+npm test
 npm run build
 cd ..
 docker compose config --quiet
@@ -743,7 +743,7 @@ The signed-in home page is a responsive grocery catalog with product name,
 package, category, USD price (integer cents formatted with `Intl.NumberFormat`),
 and explicit availability. Unavailable products remain visible. The seed's local
 placeholder SVG is included; missing, broken, or nonlocal image references use a
-local fallback. There are no remote image services, cart controls, or chat controls.
+local fallback. There are no remote image services or chat controls. The subsequent cart UI milestone adds cart controls.
 
 Submit the labeled search form with Search or Enter. Clear resets the input and
 browses from the first page. Empty search browses all groceries. Each request uses
@@ -980,4 +980,73 @@ Errors use `{"error":"message"}`: 400 invalid input/quantity, 401 missing or
 invalid authentication, 403 failed CSRF checks, 404 missing product or existing
 cart item, 409 unavailable product for an increase, 413 oversized body, 415 wrong
 media type, and 503 operational failure. Internal error details are not exposed.
-Cart UI and checkout remain planned.
+The cart UI is implemented below; checkout remains planned.
+
+
+## Storefront cart milestone (implemented)
+
+Available product cards add one unit. The accessible Your cart section shows each
+product's package, current unit price, quantity, line total, availability, and
+subtotal. Total units and distinct item counts are separate. Quantities are whole
+numbers from 1–99, saved with an explicit Update action; Remove is separate.
+Unavailable items stay visible and can be reduced or removed, with increases
+disabled. Subtotal includes unavailable items; prices are confirmed again at
+checkout. No checkout control is included.
+
+The storefront shares one cart state without an additional state library. It
+loads GET `/api/cart` and reads again after every successful 204 mutation. Requests
+use relative URLs, same-origin credentials, no-store caching, and eight-second
+timeouts. POST/PUT send JSON; all mutations send `X-CSRF-Protection: 1`. The browser
+supplies Origin and Fetch Metadata. Product/cart shapes and safe integer-cent
+totals are validated before display with `Intl.NumberFormat`.
+
+Mutations are serialized with both a synchronous guard and disabled controls,
+including during the follow-up read. No optimistic updates or automatic mutation
+retries occur. Obsolete reads cannot replace newer state. Search, pagination,
+identity, and logout remain independent. Changes update this browser immediately;
+there is no polling or synchronization between tabs or devices. Refresh cart is
+a read-only action to load external changes.
+
+Loading, empty, read failure, mutation rejection, and expired sessions have
+separate messages announced without moving focus. Quantity inputs retain their
+DOM identity. A saved mutation whose follow-up read fails reports “Change saved,
+cart refresh failed” and disables edits until Refresh cart succeeds. Network,
+timeout, unexpected success responses, and server failures are treated as
+uncertain mutation outcomes: the server may have committed. The UI explains this,
+automatically attempts a read (never a repeat mutation), and requires successful
+reconciliation before further changes. Aborting a timed-out request does not
+cancel its server-side effects.
+
+Use Node 24 and the existing infrastructure/setup instructions above. Apply the
+existing cart migration and restart Go from this checkout before testing; Vite
+hot reload does not replace a running Go binary. From `frontend/`:
+
+```sh
+npm ci
+npm run dev
+# In another terminal, also from frontend/:
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Vitest with jsdom and React Testing Library covers additions, absolute updates,
+removal, cents/subtotals, unavailable items, quantity validation, stable focus,
+search preservation, rapid duplicate clicks, obsolete reads, request JSON/headers,
+saved changes with failed refresh, uncertain outcomes and reconciliation, session
+expiry, CSRF rejection, other HTTP errors, and bounded timeouts. CI runs the test
+command in its Frontend job.
+
+Verification for this milestone: Node 24 lint, typecheck, all 17 frontend tests,
+and production build passed. Headless Chrome through APISIX with a newly
+registered isolated account and controlled cart responses verified keyboard
+addition/update, removal, reload rendering, search preservation, and no horizontal
+overflow at 375px/1280px. Registration, catalog, identity, logout, and signed-out
+cart protection used the real services. The authenticated running backend returned
+404 for `/api/cart`; live add/update/remove persistence and two-user ownership
+checks could not be verified. Existing processes, developer records, and volumes
+were preserved; no migrations or seeds were run. Only new verification accounts
+were registered. Complete those live cart checks after restarting the updated Go
+server with the existing cart migration applied. Screen-reader announcement
+behavior has automated markup coverage, but was not tested with a screen reader.
