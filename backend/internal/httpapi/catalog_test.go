@@ -37,7 +37,7 @@ func (s *catalogStub) Get(_ context.Context, id string) (catalog.Product, error)
 	return s.product, s.err
 }
 func catalogRequest(repo Catalog, path string) *httptest.ResponseRecorder {
-	router := NewRouter(func(context.Context) error { return nil }, func(h http.Handler) http.Handler { return h }, repo)
+	router := NewRouter(func(context.Context) error { return nil }, func(h http.Handler) http.Handler { return h }, repo, CSRF{})
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 	return w
@@ -121,7 +121,7 @@ func TestCatalogDetailAndFailures(t *testing.T) {
 }
 func TestCatalogRequiresAuthentication(t *testing.T) {
 	repo := &catalogStub{}
-	router := NewRouter(func(context.Context) error { return nil }, testVerifier(t).Middleware, repo)
+	router := NewRouter(func(context.Context) error { return nil }, testVerifier(t).Middleware, repo, CSRF{})
 	for _, path := range []string{"/products", "/products/bb5ce88f-908c-5a99-8ae7-90b60b00ae1b"} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest("GET", path, nil))

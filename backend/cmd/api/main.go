@@ -24,6 +24,10 @@ func main() {
 }
 
 func run() error {
+	csrf, err := httpapi.NewCSRF(os.Getenv("BROWSER_ORIGIN"))
+	if err != nil {
+		return err
+	}
 	verifier, err := auth.New(os.Getenv("OIDC_ISSUER"), os.Getenv("OIDC_AUDIENCE"), os.Getenv("OIDC_JWKS_URL"))
 	if err != nil {
 		return err
@@ -45,7 +49,7 @@ func run() error {
 	products := catalog.NewRepository(pool)
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware, products, cart.NewService(pool, products)),
+		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware, products, csrf, cart.NewService(pool, products)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

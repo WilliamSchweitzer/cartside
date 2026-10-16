@@ -150,7 +150,7 @@ cd backend
 HTTP_ADDR=0.0.0.0:8080 go run ./cmd/api
 ```
 
-Compose automatically reads the root `.env` for interpolation of PostgreSQL settings; it does not export variables into your shell. Go reads only its process environment and does not load `.env`. The shell commands above export `DATABASE_URL`, the required `OIDC_*` verification settings, and the optional `HTTP_ADDR`. Only source a trusted file, using shell-compatible assignments. Alternatively, supply `DATABASE_URL` directly in the Go process environment.
+Compose automatically reads the root `.env` for interpolation of PostgreSQL settings; it does not export variables into your shell. Go reads only its process environment and does not load `.env`. The shell commands above export `DATABASE_URL`, the required `BROWSER_ORIGIN` and `OIDC_*` verification settings, and the optional `HTTP_ADDR`. Only source a trusted file, using shell-compatible assignments. Alternatively, supply `DATABASE_URL` directly in the Go process environment.
 
 `DATABASE_URL` is required and must be a PostgreSQL URL with a host, user, and database name. Missing or malformed configuration fails startup with a generic error. A database connection failure does not prevent startup. `HTTP_ADDR` defaults to `:8080`; the example binds all IPv4 interfaces so APISIX can reach Go. Local `sslmode=disable` is for this host-only development setup.
 
@@ -164,7 +164,7 @@ npm run dev
 
 Vite binds `0.0.0.0:5173` so the APISIX container can reach it. `strictPort` makes startup fail if 5173 is occupied. Open http://localhost:9080, including for HMR; do not use 5173 as the browser origin. Vite explicitly allows `localhost` and `host.docker.internal` (its built-in localhost/IP allowances also apply). The development WebSocket connects to `ws://localhost:9080` and APISIX forwards upgrades to Vite. The frontend route has a one-hour read inactivity timeout for development WebSockets; the API retains its existing timeouts and rewriting. Keep this development server on a trusted machine with inbound firewall restrictions, like Go.
 
-Frontend configuration is committed in `frontend/vite.config.ts`; it needs no environment variables. Compose consumes root `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and the Keycloak/gateway variables documented below; host-run Go consumes `DATABASE_URL`, `HTTP_ADDR`, `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`. Compose does not run or configure Vite, and bind-mounted APISIX YAML is not interpolated. Never copy database credentials or other secrets into frontend `.env` files or `VITE_*` variables: those values can enter browser bundles. Changing the Vite port also requires changing the APISIX frontend upstream; changing the gateway address requires updating the WebSocket client address.
+Frontend configuration is committed in `frontend/vite.config.ts`; it needs no environment variables. Compose consumes root `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and the Keycloak/gateway variables documented below; host-run Go consumes `DATABASE_URL`, `HTTP_ADDR`, `BROWSER_ORIGIN`, `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URL`. Compose does not run or configure Vite, and bind-mounted APISIX YAML is not interpolated. Never copy database credentials or other secrets into frontend `.env` files or `VITE_*` variables: those values can enter browser bundles. Changing the Vite port also requires changing the APISIX frontend upstream; changing the gateway address requires updating the WebSocket client address.
 
 For a production bundle:
 
@@ -918,18 +918,55 @@ for an empty cart. Each item contains `product` (the catalog representation),
 `quantity`, and `line_total_cents`. Prices and totals use integer cents and current
 catalog prices. All cart responses use `Cache-Control: no-store`.
 
-Mutations require `X-CSRF-Protection: 1`. Browser fetches use relative URLs,
-for example `fetch('/api/cart/items', {method: 'POST', headers:
-{'Content-Type': 'application/json', 'X-CSRF-Protection': '1'}, body:
-JSON.stringify({product_id: selectedProduct.id, quantity: 1})})`.
-This custom header cannot be sent by cross-origin browser code without a CORS
-preflight. Neither Go nor APISIX enables CORS. Do not add cross-origin permission
-for these authenticated routes without revisiting CSRF protection. Mutations
-also reject `Sec-Fetch-Site: cross-site`; absence of this browser header does not
-bypass the mandatory custom header. APISIX forwards the custom header and Fetch
-Metadata headers with its existing API route; it removes browser cookies before
-Go and forwards only the gateway-generated access token. No gateway route change
-is needed. Existing upstream `retries: 0` remains in effect.
+Authenticated unsafe application requests (all methods except GET, HEAD, and
+OPTIONS) require exactly one `Origin` matching the required Go setting
+`BROWSER_ORIGIN=http://localhost:9080` by scheme, case-insensitive hostname,
+and effective port (HTTP 80, HTTPS 443 when omitted), plus exactly one
+`X-CSRF-Protection: 1` header. Startup rejects missing or invalid configuration:
+only HTTP/HTTPS with a host and optional valid port is accepted; no credentials,
+path beyond an optional trailing slash, query, or fragment. Existing checkouts
+must add `BROWSER_ORIGIN` to their trusted local environment and restart Go.
+The Origin request header itself must have origin syntax without a trailing slash.
+
+Missing, null, malformed, repeated, or mismatched origins return generic JSON
+403 before any mutation operation. If `Sec-Fetch-Site` is present, its only
+accepted value is exactly one `same-origin`; same-site, cross-site, none,
+malformed, and repeated values are rejected. Without Fetch Metadata, both Origin
+and the custom header remain mandatory. Host and forwarded headers never define
+the trusted origin. Authentication runs separately before reusable CSRF middleware;
+health and read-only requests need no CSRF headers. Gateway-owned OIDC callbacks
+and logout do not reach this middleware.
+
+Browser fetches use relative URLs, for example:
+
+```js
+await fetch('/api/cart/items', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json', 'X-CSRF-Protection': '1'},
+  body: JSON.stringify({product_id: selectedProduct.id, quantity: 1})
+});
+```
+
+The browser supplies Origin and Fetch Metadata itself. This custom-header policy
+is not a secret CSRF token: the fixed value `1` forces cross-origin browser code
+to preflight, while Origin and Fetch Metadata checks enforce the configured
+browser boundary. Neither Go nor APISIX enables CORS; do not enable cross-origin
+credentialed CORS for these routes. This does not protect against same-origin XSS
+or authenticate non-browser clients.
+
+Curl mutations also need Origin and the custom header, plus an authenticated
+APISIX session cookie jar (kept private); curl does not supply browser headers
+automatically. For example, setting an existing item's quantity:
+
+```sh
+curl -i --cookie "$CARTSIDE_COOKIE_JAR" -X PUT http://localhost:9080/api/cart/items/PRODUCT_UUID -H 'Origin: http://localhost:9080' -H 'X-CSRF-Protection: 1' -H 'Content-Type: application/json' --data '{"quantity":2}'
+```
+
+If manually sending `Sec-Fetch-Site`, use `same-origin`. Direct authenticated
+Go requests have the same CSRF requirements. APISIX preserves Origin,
+X-CSRF-Protection, and Sec-Fetch-Site as received and never manufactures them.
+Its API route removes cookies before Go and forwards the gateway-generated access
+token. Existing upstream `retries: 0` remains in effect.
 
 POST/PUT require `application/json` (media type parameters are allowed), at most
 4096 body bytes, exact field names, a canonical hyphenated UUID, and integer

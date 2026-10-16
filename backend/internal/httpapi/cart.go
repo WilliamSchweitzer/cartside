@@ -43,15 +43,6 @@ func cartRoutes(r chi.Router, service Cart) {
 					catalogError(w, 401, "unauthorized")
 					return
 				}
-				// A custom header forces cross-origin browsers to preflight. Do not enable
-				// credentialed cross-origin access to these routes at the gateway or backend.
-				if req.Method != http.MethodGet && req.Method != http.MethodHead && req.Method != http.MethodOptions {
-					headers := req.Header.Values("X-CSRF-Protection")
-					if len(headers) != 1 || headers[0] != "1" || req.Header.Get("Sec-Fetch-Site") == "cross-site" {
-						catalogError(w, 403, "CSRF protection required")
-						return
-					}
-				}
 				next.ServeHTTP(w, req)
 			})
 		})

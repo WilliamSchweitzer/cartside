@@ -11,10 +11,10 @@ import (
 )
 
 // NewRouter constructs the application's HTTP routes.
-func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, carts ...Cart) http.Handler {
+func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts ...Cart) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
-		protected := authenticate(next)
+		protected := authenticate(csrf.Middleware(next))
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet && (r.URL.Path == "/health/live" || r.URL.Path == "/health/ready") {
 				next.ServeHTTP(w, r)
