@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/WilliamSchweitzer/cartside/backend/internal/auth"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/catalog"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/database"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/httpapi"
 )
@@ -42,7 +43,7 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware),
+		Handler:           httpapi.NewRouter(pool.Ping, verifier.Middleware, catalog.NewRepository(pool)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

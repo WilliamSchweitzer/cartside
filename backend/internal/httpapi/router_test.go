@@ -29,7 +29,7 @@ func TestReadiness(t *testing.T) {
 					t.Error("missing short readiness deadline")
 				}
 				return tc.err
-			}, testVerifier(t).Middleware)
+			}, testVerifier(t).Middleware, nil)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil))
 			if !called || w.Code != tc.code || w.Body.String() != tc.body || w.Header().Get("Content-Type") != "application/json" {
@@ -52,7 +52,7 @@ func TestReadinessRecovery(t *testing.T) {
 			return errors.New("offline")
 		}
 		return nil
-	}, testVerifier(t).Middleware)
+	}, testVerifier(t).Middleware, nil)
 	for _, code := range []int{503, 200} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest("GET", "/health/ready", nil))

@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestone 1 is implemented: catalog schema migrations and 100 reproducible development products. Catalog HTTP endpoints, search, UI, other business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1 and 2 are implemented: catalog schema migrations, 100 reproducible development products, and an authenticated read-only catalog API with search and pagination. Catalog UI, other business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -59,7 +59,7 @@ The AI provider key belongs to APISIX. The internal AI route must require servic
 
 ## Go backend
 
-The backend will be a modular monolith: one Go application with five internal business modules. Currently, `internal/auth` verifies access tokens and provides a minimal principal, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves public health and protected current-user routes. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
+The backend will be a modular monolith: one Go application with five internal business modules. Currently, `internal/auth` verifies access tokens and provides a minimal principal, `cmd/api` manages process startup and shutdown, `internal/database` validates database configuration and creates the pool, and `internal/httpapi` serves public health, protected current-user, and catalog routes. `internal/catalog` owns the runtime product model and PostgreSQL read repository, independently of the development seed package. Pool creation does not wait for PostgreSQL. The process closes the shared pool after HTTP shutdown.
 
 | Module | Responsibility |
 | --- | --- |
@@ -632,3 +632,92 @@ twice, seed twice, disposable `down`/`up`). Formatting, `go vet ./...`,
 `go test ./...`, `go test -race ./...`, `go build ./...`, and configuration parsing
 also passed. Existing development databases, volumes, and Keycloak data were not
 modified. The updated GitHub Actions workflow has not yet been run remotely.
+
+
+## Phase 2 milestone 2: read-only catalog API (implemented)
+
+Both endpoints require the existing APISIX browser session and independently
+verified Go authentication. APISIX already forwards these routes and preserves
+query strings; it removes `/api`, so Go handles `/products` and `/products/{id}`.
+All catalog responses use JSON and `Cache-Control: no-store`.
+
+- `GET /api/products?q=apple&limit=20&offset=0` lists or searches products.
+  Trimmed empty `q` lists the catalog. Search matches literal substrings in name
+  or description, case-insensitively; `%`, `_`, and backslashes are literal.
+  Search accepts at most 200 Unicode characters after trimming.
+- `limit` defaults to 20 and accepts 1–100. `offset` defaults to 0 and accepts
+  0–2147483647. Numeric values must contain decimal digits only. Empty numeric
+  values, signs, fractions, overflow, repeated recognized parameters, malformed
+  query encoding, invalid UTF-8, NUL search characters, and overlong search text
+  return 400. Unknown query parameters are ignored.
+- Results include unavailable products, ordered by name and then UUID.
+  The response is `{"items":[...],"limit":20,"offset":0,"has_more":false}`.
+  No matches produce `"items":[]`. One extra row determines `has_more`;
+  no total-count query runs.
+- `GET /api/products/{id}` returns one product. IDs use the hyphenated
+  36-character UUID syntax (hexadecimal is case-insensitive).
+  Malformed IDs return 400; valid absent IDs return 404.
+- Both representations contain `id`, `name`, `description`, `category`,
+  `package_label`, `image_reference`, `price_cents`, `currency`, and
+  `available`. Prices remain integer cents, including in JSON.
+  Database failures return generic JSON 503 errors, distinct from missing products.
+  Database error details and credentials are never returned.
+
+The HTTP handlers validate input and call the injected catalog repository.
+The repository uses the shared pgx pool, parameterized SQL, and a three-second
+deadline per operation. PostgreSQL performs literal substring matching with
+`strpos(lower(...), lower($1))`. There are no new indexes or search services.
+
+Run migrations and the development seed explicitly as documented above, then
+restart Go with the existing configuration. In a signed-in tab at
+http://localhost:9080, these browser-console examples use the existing HttpOnly
+session without embedding credentials:
+
+```js
+await fetch('/api/products?q=apple&limit=2&offset=0', {
+  credentials: 'same-origin'
+}).then(r => r.json());
+
+await fetch('/api/products/bb5ce88f-908c-5a99-8ae7-90b60b00ae1b', {
+  credentials: 'same-origin'
+}).then(r => r.json());
+```
+
+The detail example is the seeded Gala Apples UUID; existing developer edits
+remain authoritative. Check pagination, an unmatched query, and a literal
+percent query (`?q=%25`). Confirm `/api/me`, `/auth/session`, readiness, and
+logout still work. After logout, catalog requests must return 401.
+
+Verification from `backend/`:
+
+```sh
+gofmt -l cmd internal
+go vet ./...
+go test ./...
+go test -race ./...
+go build ./...
+# Explicit integration run: a NEW empty disposable database, never DATABASE_URL.
+# Set CARTSIDE_TEST_DATABASE_URL privately in your shell first.
+go test -tags=integration -race ./internal/catalog -run TestPostgresCatalog -count=1 -v
+```
+
+The catalog integration test refuses a database containing user tables, applies
+the real migration, and inserts isolated test products. It covers name and
+description matching, case-insensitivity, literal wildcards/backslashes,
+deterministic tie ordering, pagination and lookahead, empty results, unavailable
+products, detail consistency, not-found, and database failure. It leaves data in
+that disposable database. Use a separate fresh database for the earlier
+`catalogseed` lifecycle test; do not run both against the same database.
+Default unit tests require no database.
+
+Local verification passed formatting, vet, unit tests, race tests, build, and
+the explicit repository integration suite against a disposable PostgreSQL
+17.10 container. Compose validation and the running APISIX configuration test
+passed. Live signed-out gateway requests returned 401 for both catalog endpoints,
+`/api/me`, and `/auth/session`; health routes and the signed-out page returned
+200. Authenticated seeded-product requests through APISIX and browser
+session/logout regression checks were not run: this session had no browser
+automation capability or authenticated browser session, and the existing host
+server was left running unchanged. Run the signed-in examples after restarting
+Go. Existing developer records and persistent volumes were not modified.
+No catalog UI, mutations, carts, AI integration, or deployment is included.

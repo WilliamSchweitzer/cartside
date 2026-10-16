@@ -70,7 +70,7 @@ func TestAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := httpapi.NewRouter(func(context.Context) error { return nil }, v.Middleware)
+	router := httpapi.NewRouter(func(context.Context) error { return nil }, v.Middleware, nil)
 	cases := []struct {
 		name       string
 		change     func(map[string]any)
