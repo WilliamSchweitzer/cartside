@@ -40,8 +40,12 @@ func TestCatalogLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Also exercise migration and rollback with a pre-existing shared extension.
+	if _, err := pool.Exec(ctx, "CREATE EXTENSION pg_trgm"); err != nil {
+		t.Fatal(err)
+	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 1 {
+	if err != nil || len(results) != 2 {
 		t.Fatalf("initial migration: %v, %v", results, err)
 	}
 	results, err = provider.Up(ctx)
@@ -84,6 +88,15 @@ func TestCatalogLifecycle(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT price_cents,available FROM products WHERE id=$1`, products[0].ID).Scan(&price, &available); err != nil || price != 12345 || available {
 		t.Fatalf("edits not preserved: %d %v %v", price, available, err)
 	}
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Rolling back search must preserve the shared extension and catalog data.
+	var installed bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_extension WHERE extname='pg_trgm')").Scan(&installed); err != nil || !installed {
+		t.Fatalf("extension removed by rollback: %v", err)
+	}
+	count(101)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}

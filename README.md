@@ -641,15 +641,20 @@ query strings; it removes `/api`, so Go handles `/products` and `/products/{id}`
 All catalog responses use JSON and `Cache-Control: no-store`.
 
 - `GET /api/products?q=apple&limit=20&offset=0` lists or searches products.
-  Trimmed empty `q` lists the catalog. Search matches literal substrings in name
-  or description, case-insensitively; `%`, `_`, and backslashes are literal.
+  Trimmed empty `q` lists the catalog. Search preserves literal substrings in name
+  or description, case-insensitively, and adds typo-tolerant candidates for queries
+  of at least three characters. `%`, `_`, and backslashes stay strictly literal.
+  Internal Unicode whitespace runs collapse to one space after validation.
   Search accepts at most 200 Unicode characters after trimming.
 - `limit` defaults to 20 and accepts 1–100. `offset` defaults to 0 and accepts
   0–2147483647. Numeric values must contain decimal digits only. Empty numeric
   values, signs, fractions, overflow, repeated recognized parameters, malformed
   query encoding, invalid UTF-8, NUL search characters, and overlong search text
   return 400. Unknown query parameters are ignored.
-- Results include unavailable products, ordered by name and then UUID.
+- Results include unavailable products. Empty search orders by name then UUID;
+  search orders exact names, name prefixes, other literal names, then remaining
+  candidates using name similarity plus 20% description similarity. Name and UUID
+  break ties. Filtering and ranking precede pagination.
   The response is `{"items":[...],"limit":20,"offset":0,"has_more":false}`.
   No matches produce `"items":[]`. One extra row determines `has_more`;
   no total-count query runs.
@@ -665,7 +670,15 @@ All catalog responses use JSON and `Cache-Control: no-store`.
 The HTTP handlers validate input and call the injected catalog repository.
 The repository uses the shared pgx pool, parameterized SQL, and a three-second
 deadline per operation. PostgreSQL performs literal substring matching with
-`strpos(lower(...), lower($1))`. There are no new indexes or search services.
+`strpos(lower(...), lower($1))` alongside explicit pg_trgm word-similarity
+comparisons with an inclusive **0.44** cutoff. No connection similarity settings
+change. New Goose migration `00002_catalog_search.sql` enables pg_trgm; run
+`go run ./cmd/migrate up` before restarting the updated API. Its rollback retains
+the database-wide extension to protect pre-existing/shared usage. No new index or
+search service was added. See [search evaluation and limitations](docs/catalog-search.md)
+for fixture cases, threshold measurements, query-plan evidence, reproducible
+integration commands, and authenticated browser verification. Some short-word
+typos still fail; this is similarity search rather than a spelling guarantee.
 
 Run migrations and the development seed explicitly as documented above, then
 restart Go with the existing configuration. In a signed-in tab at

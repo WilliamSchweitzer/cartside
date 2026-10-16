@@ -4,6 +4,7 @@ package catalog
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,15 +50,42 @@ func scan(row pgx.Row) (Product, error) {
 	return p, err
 }
 
+// NormalizeSearch collapses Unicode whitespace for every repository caller.
+func NormalizeSearch(search string) string { return strings.Join(strings.Fields(search), " ") }
+
+// FuzzyThreshold is evaluated against the development fixture; see docs/catalog-search.md.
+const FuzzyThreshold = 0.44
+
+const listSQL = `WITH evidence AS (
+ SELECT products.*,
+   strpos(lower(name), lower($1::text)) AS name_position,
+   strpos(lower(description), lower($1::text)) AS description_position,
+   CASE WHEN char_length($1) >= 3 AND $5::boolean THEN word_similarity(lower($1), lower(name)) ELSE 0 END AS name_score,
+   CASE WHEN char_length($1) >= 3 AND $5::boolean THEN word_similarity(lower($1), lower(description)) ELSE 0 END AS description_score
+ FROM products
+)
+SELECT ` + columns + ` FROM evidence
+ WHERE $1 = '' OR name_position > 0 OR description_position > 0
+    OR name_score >= $4 OR description_score >= $4
+ ORDER BY
+   CASE WHEN $1 = '' THEN 0
+        WHEN lower(name) = lower($1) THEN 0
+        WHEN name_position = 1 THEN 1
+        WHEN name_position > 0 THEN 2 ELSE 3 END,
+   CASE WHEN $1 = '' THEN 0 ELSE name_score + 0.2 * description_score END DESC,
+   name, id
+ LIMIT $2 OFFSET $3`
+
 // List fetches one lookahead row, without a count query. strpos treats all search
 // characters literally, including SQL LIKE wildcards and backslashes.
 func (r *Repository) List(ctx context.Context, q Query) (Page, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	page := Page{Items: make([]Product, 0), Limit: q.Limit, Offset: q.Offset}
-	rows, err := r.pool.Query(ctx, "SELECT "+columns+` FROM products
- WHERE strpos(lower(name), lower($1::text)) > 0 OR strpos(lower(description), lower($1::text)) > 0
- ORDER BY name, id LIMIT $2 OFFSET $3`, q.Search, q.Limit+1, q.Offset)
+	search := NormalizeSearch(q.Search)
+	// Keep wildcard/backslash searches strictly literal: pg_trgm ignores punctuation.
+	fuzzy := !strings.ContainsAny(search, `%_\`)
+	rows, err := r.pool.Query(ctx, listSQL, search, q.Limit+1, q.Offset, FuzzyThreshold, fuzzy)
 	if err != nil {
 		return Page{}, err
 	}

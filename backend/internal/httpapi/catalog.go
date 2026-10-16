@@ -46,6 +46,7 @@ func catalogQuery(raw string) (catalog.Query, error) {
 	if !utf8.ValidString(q.Search) || utf8.RuneCountInString(q.Search) > 200 || strings.ContainsRune(q.Search, 0) {
 		return q, errors.New("invalid search")
 	}
+	q.Search = catalog.NormalizeSearch(q.Search)
 	for _, field := range []struct {
 		key      string
 		target   *int

@@ -46,6 +46,7 @@ func TestCatalogValidation(t *testing.T) {
 	for _, query := range []string{
 		"limit=", "limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=+1", "limit=abc", "limit=1&limit=2",
 		"offset=", "offset=-1", "offset=2147483648", "offset=99999999999999999999999", "offset=1&offset=2",
+		"q=" + url.QueryEscape("a"+strings.Repeat(" ", 200)+"b"),
 		"q=a&q=b", "q=%zz", "q=%00", "q=%FF", "q=" + url.QueryEscape(strings.Repeat("界", 201)),
 	} {
 		t.Run(query, func(t *testing.T) {
@@ -73,6 +74,7 @@ func TestCatalogList(t *testing.T) {
 	}{
 		{"", catalog.Query{Limit: 20}},
 		{"?q=%20%20%20", catalog.Query{Limit: 20}},
+		{"?q=Whole%09%20%20Milk", catalog.Query{Search: "Whole Milk", Limit: 20}},
 		{"?q=%20Milk%20&limit=100&offset=2147483647", catalog.Query{Search: "Milk", Limit: 100, Offset: 2147483647}},
 		{"?q=" + url.QueryEscape(strings.Repeat("界", 200)), catalog.Query{Search: strings.Repeat("界", 200), Limit: 20}},
 	} {
