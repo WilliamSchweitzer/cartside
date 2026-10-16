@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Catalog from './Catalog'
 
 type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
 
@@ -31,11 +32,10 @@ function SignedInIdentity() {
     void load()
     return () => { active = false; controller.abort(); window.clearTimeout(timeout) }
   }, [attempt])
-  return <section aria-labelledby="identity-heading">
-    <h2 id="identity-heading">Signed-in identity</h2>
+  return <section className="identity" aria-label="Signed-in identity">
     <div role="status" aria-live="polite">
       {identity.state === 'loading' && <p>Loading identity…</p>}
-      {identity.state === 'ready' && <><p>Subject: {identity.subject}</p><p>Issuer: {identity.issuer}</p></>}
+      {identity.state === 'ready' && <p title={`Issuer: ${identity.issuer}`}>Signed in · <span title={identity.subject}>{identity.subject}</span></p>}
       {identity.state === 'expired' && <p>Your session has expired or needs renewal. <a href="/auth/logout">Return to sign-in</a></p>}
       {identity.state === 'failed' && <p>The identity service is unavailable. Please try again.</p>}
     </div>
@@ -94,12 +94,19 @@ export default function App() {
 
   return (
     <main>
-      <p className="eyebrow">A grocery storefront in the making</p>
-      <h1>Cartside</h1>
-      <a href="/auth/logout">Sign out</a>
-      <p className="intro">A foundation for a simpler grocery shopping experience.</p>
-      <p>This first screen checks the connection to the backend. Shopping features are still in development.</p>
-      <SignedInIdentity />
+      <header className="site-header">
+        <a className="brand" href="/">Cartside<span>Groceries for your everyday</span></a>
+        <div className="account"><SignedInIdentity /><a href="/auth/logout">Sign out</a></div>
+      </header>
+      <div className="welcome">
+        <p className="eyebrow">Your neighborhood essentials</p>
+        <h1>A fresh look at<br />everyday groceries.</h1>
+        <p>Browse the shelves and find your favorites.</p>
+        <p className="browse-note">Browse-only preview · Shopping and checkout are coming later.</p>
+      </div>
+      <Catalog />
+      <details className="diagnostics">
+        <summary>Service diagnostics</summary>
       <section aria-labelledby="readiness-heading">
         <h2 id="readiness-heading">Backend readiness</h2>
         <div role="status" aria-live="polite" aria-atomic="true" className={`status ${readiness}`}>
@@ -111,6 +118,8 @@ export default function App() {
           setAttempt((value) => value + 1)
         }}>Retry readiness check</button>
       </section>
+      </details>
+      <footer>Cartside · Everyday starts here.</footer>
     </main>
   )
 }

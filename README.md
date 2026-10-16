@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1 and 2 are implemented: catalog schema migrations, 100 reproducible development products, and an authenticated read-only catalog API with search and pagination. Catalog UI, other business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable, read-only grocery storefront, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. Cart, checkout, other business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The screen distinguishes loading, ready, unavailable (HTTP failure), and network-error states, with Retry to check again. Application access requires Keycloak sign-in. Shopping features remain planned; see the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. Cart and checkout remain planned; see the gateway authentication section below.
 
 ### Configuration
 
@@ -591,9 +591,8 @@ defaulting to true. The readable fixture is
 `backend/internal/catalogseed/products.json`: exactly 100 fictional groceries,
 with fixed packages, prices, and committed deterministic UUIDv5 IDs derived from
 `https://cartside.example/sample-products/` plus each original product name.
-All begin available. `/images/products/placeholder.svg` is a stable local image
-reference reserved for the later catalog UI milestone; the asset is not supplied
-or fetched here.
+All begin available. `/images/products/placeholder.svg` is the stable local image
+reference, now supplied by the catalog UI in `frontend/public/images/products/`.
 
 The full fixture is validated before any write, including count, UUID uniqueness,
 required fields, category, USD currency, availability, and PostgreSQL integer price
@@ -721,3 +720,56 @@ automation capability or authenticated browser session, and the existing host
 server was left running unchanged. Run the signed-in examples after restarting
 Go. Existing developer records and persistent volumes were not modified.
 No catalog UI, mutations, carts, AI integration, or deployment is included.
+
+
+## Phase 2 milestone 3: read-only storefront (implemented)
+
+The signed-in home page is a responsive grocery catalog with product name,
+package, category, USD price (integer cents formatted with `Intl.NumberFormat`),
+and explicit availability. Unavailable products remain visible. The seed's local
+placeholder SVG is included; missing, broken, or nonlocal image references use a
+local fallback. There are no remote image services, cart controls, or chat controls.
+
+Submit the labeled search form with Search or Enter. Clear resets the input and
+browses from the first page. Empty search browses all groceries. Each request uses
+20 products; Previous/Next use the submitted query, offset, and `has_more`, without
+claiming a total count. Editing the input does not change the current results or
+pagination. Submitting a changed query resets to the first page.
+
+Catalog requests use the existing authenticated relative `/api/products` route,
+same-origin credentials, and an eight-second timeout. Superseded requests are
+aborted and ignored. Loading, empty results, service/network failure with Retry,
+and 401 session renewal are explicit states. A 401 offers Return to sign-in
+through the existing logout flow; it does not automatically redirect. The compact
+identity area and logout remain in the header. Expand Service diagnostics for
+backend readiness and its independent Retry action.
+
+Run the existing frontend lint, typecheck, and build scripts using Node 24.
+For browser verification after migrations, seed, and API startup:
+
+- Sign in through http://localhost:9080 and browse multiple pages. Search by Enter
+  and Search; edit the input without submitting, then change pages to confirm the
+  submitted query stays active. Submit a new query from a later page.
+- Try an unmatched search, Clear, and a literal `%` search. Confirm prices and
+  packages against the API. Developer-edited unavailable products remain visible.
+- Simulate failed image loads, catalog 503/network failures, delayed responses,
+  and 401 responses in browser tooling. Retry should keep the submitted query and
+  page; stale responses must never replace newer results. A stalled request should
+  fail after eight seconds.
+- Check narrow and wide layouts, keyboard submission and navigation, diagnostics,
+  identity, and logout. After logout, `/api/products`, `/api/me`, and
+  `/auth/session` must return 401.
+
+Local verification passed Node 24 lint, typecheck, and production build, plus a
+headless Chrome walkthrough through the running gateway. Controlled catalog
+responses exercised search/Enter, draft-versus-submitted pagination, stale-request
+cancellation, USD formatting, unavailable products, broken-image fallback, empty
+results/Clear, 503/network/timeout failures and Retry, and 401 navigation. Layouts
+at 375px and 1280px had no horizontal overflow. Identity, readiness Retry, logout,
+and signed-out gateway protection used the real running services. A subsequent real-service check found an older running Go binary and an
+unmigrated development database. After rebuilding/restarting Go and running the
+existing migration and seed commands, authenticated catalog requests returned
+200 with 20 products and `has_more`. The real seeded storefront passed card
+rendering, Next, search with Enter, page reset, and Clear checks. When updating an
+existing checkout, restart Go and apply migrations/seed as documented above;
+frontend hot reload does not update the running Go process.
