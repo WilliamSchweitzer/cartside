@@ -18,6 +18,20 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      catalog-postgres:
+        image: postgres:17.10-bookworm
+        env:
+          POSTGRES_USER: catalog_test
+          POSTGRES_PASSWORD: disposable_ci_password
+          POSTGRES_DB: catalog_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U catalog_test -d catalog_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -39,6 +53,10 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./...
+      - name: Catalog integration (disposable database)
+        env:
+          CARTSIDE_TEST_DATABASE_URL: postgres://catalog_test:disposable_ci_password@127.0.0.1:${{ job.services.catalog-postgres.ports[5432] }}/catalog_test?sslmode=disable
+        run: go test -tags=integration -race ./internal/catalogseed -run TestCatalogLifecycle -count=1 -v
 
   frontend:
     name: Frontend

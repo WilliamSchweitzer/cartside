@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React checks backend readiness and offers logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestone 1 is implemented: catalog schema migrations and 100 reproducible development products. Catalog HTTP endpoints, search, UI, other business modules, resource authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -408,7 +408,7 @@ Remaining manual checklist, on a machine where the documented ports are free:
 
 ## Later milestones
 
-- Implement the product catalog and search.
+- Add catalog HTTP endpoints, search, and UI (schema and development fixtures are implemented).
 - Implement customer carts and ownership checks.
 - Add AI suggestions and explicit customer acceptance.
 - Implement simulated checkout and retry protections.
@@ -521,7 +521,7 @@ In APISIX's rewrite phase, `serverless-pre-function` (priority 10000) clears cli
 
 Go uses `github.com/coreos/go-oidc/v3` v3.14.1 with an explicit RS256 allowlist, signature verification, exact issuer and backend audience checks, required unexpired expiration and nonempty subject, and validation of `nbf` and `iat` when present. No positive clock-skew allowance is applied by the application; keep clocks synchronized. The reusable remote JWKS set caches keys and fetches again when the signing key changes. HTTP key retrieval has a three-second client timeout, redirects disabled, and verification has a four-second request deadline. A known cached key can verify during an outage; an unverifiable token fails closed. Verification errors and token values are never logged or returned. Only the verified subject and issuer enter the request context.
 
-The durable external identity is **(issuer, subject)**, never email. There is no application user table or migration. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. Future resource authorization must separately decide which carts/orders that caller can access, and must accompany CSRF controls before adding mutations. This milestone adds no authenticated mutations.
+The durable external identity is **(issuer, subject)**, never email. There is no application user table; catalog schema migrations are separate from identity. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. Future resource authorization must separately decide which carts/orders that caller can access, and must accompany CSRF controls before adding mutations. This milestone adds no authenticated mutations.
 
 Local HTTP, insecure development cookie settings, and reachable host ports remain limitations. **A valid access token can authenticate directly to Go using X-Access-Token.** Network isolation and gateway-exclusive access are not implemented. Direct Vite also remains reachable. Tokens, session cookies and administrator credentials need trusted HTTPS transport and appropriate network controls in deployment. Local JWT validation does not immediately revoke an already issued access token on browser logout; it remains usable until expiration unless a future revocation policy is added. React receives no raw tokens and never stores them; the browser carries APISIX's encrypted HttpOnly session cookie.
 
@@ -554,3 +554,81 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Access-Token: fake' http://localh
 In a signed-in browser, fetch `/api/me` with same-origin credentials and check the minimal subject/issuer JSON and no-store header. Repeat with fake Authorization, X-Access-Token and identity headers: the result must remain the authenticated session's identity. Do not print/copy cookies or real tokens. Check `/auth/session`, readiness Retry, logout, and the signed-out landing page as described above. To inspect the identity UI, delay `/api/me`, simulate a 503 then Retry, and simulate a 401; the latter must show explicit return-to-sign-in navigation without automatic redirects.
 
 Version-matched official references: [APISIX 3.14.1 OIDC forwarding](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/openid-connect.lua), [pre-function priority](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/serverless-pre-function.lua), [proxy-rewrite priority and phase](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/proxy-rewrite.lua), [Keycloak 26.8.1 audience mapper](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/mappers/AudienceProtocolMapper.java), [Keycloak 26.8.1 Admin REST API](https://www.keycloak.org/docs-api/26.8.1/rest-api/index.html), [go-oidc v3.14.1 verifier](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/verify.go), and [cached JWKS and rotation](https://github.com/coreos/go-oidc/blob/v3.14.1/oidc/jwks.go).
+
+
+## Phase 2 milestone 1: catalog persistence (implemented)
+
+`backend/migrations/00001_catalog.sql` is a reversible Goose v3 SQL migration.
+The Go dependency pins Goose to **v3.24.3**; the dedicated `cmd/migrate` command
+uses that library, so no separately installed Goose binary is required. SQL files
+are embedded in the command. Goose records applied versions in
+`goose_db_version` in the configured application database. A second `up` applies
+only pending migrations. Each SQL migration runs transactionally by default.
+
+From the repository root, export the existing trusted local configuration, then
+run these commands from **`backend/`**:
+
+```sh
+set -a
+. ./.env
+set +a
+cd backend
+go run ./cmd/migrate up
+go run ./cmd/seed
+```
+
+Both commands use the existing `DATABASE_URL` convention and require no OIDC
+settings. They do not load `.env` themselves. Neither runs during API startup.
+Run migrations explicitly before seeding. Seed output reports `inserted` and
+`skipped` counts without connection details. The seed command is for development
+sample data only; point it only at the intended development application database.
+There is no reset command.
+
+The `products` table has UUID keys (PostgreSQL's built-in `gen_random_uuid()`
+default, no extension), required nonblank descriptive fields, six simple category
+values, integer nonnegative cents, explicit USD currency, and non-null availability
+defaulting to true. The readable fixture is
+`backend/internal/catalogseed/products.json`: exactly 100 fictional groceries,
+with fixed packages, prices, and committed deterministic UUIDv5 IDs derived from
+`https://cartside.example/sample-products/` plus each original product name.
+All begin available. `/images/products/placeholder.svg` is a stable local image
+reference reserved for the later catalog UI milestone; the asset is not supplied
+or fetched here.
+
+The full fixture is validated before any write, including count, UUID uniqueness,
+required fields, category, USD currency, availability, and PostgreSQL integer price
+bounds. All inserts use one transaction and `ON CONFLICT (id) DO NOTHING`.
+Existing rows, including price and availability edits, are preserved; nonfixture
+rows are untouched. **Changing the fixture does not update an already-seeded
+record.** Only primary-key conflicts are skipped; other constraint failures abort
+and roll back the seed.
+
+Rollback **deletes all catalog data**, including custom products and edits:
+`go run ./cmd/migrate down` (from `backend/`). Do not run this against existing
+developer data. Rollback and reapply verification must use a disposable database.
+
+Default unit tests need no database. Live database checks are explicitly separated
+with the `integration` build tag. They require an **empty, disposable database**
+and refuse any database already containing user tables. The test migrates, seeds,
+edits data, drops/recreates the catalog, and tests an injected constraint failure.
+It leaves test data behind; discard only that disposable database afterward.
+From `backend/`, with a separately provisioned empty PostgreSQL 17 database:
+
+```sh
+# Set this to your disposable database URL, never the application DATABASE_URL.
+export CARTSIDE_TEST_DATABASE_URL='postgres://catalog_test:replace_with_test_password@127.0.0.1:55432/catalog_test?sslmode=disable'
+go test -tags=integration -race ./internal/catalogseed -run TestCatalogLifecycle -count=1 -v
+```
+
+CI runs this explicit integration command against a fresh PostgreSQL service,
+separately from default unit tests. It verifies empty migration and no-op rerun,
+100 first inserts, duplicate-free reseeding, preserved edits and nonfixture data,
+atomic seed failure, and disposable-only rollback/reapply. No catalog endpoints,
+search, cart behavior, AI, or frontend features are included in this milestone.
+
+Local milestone verification passed against a separate PostgreSQL 17.10 container:
+the full integration test with the race detector and command smoke checks (`up`
+twice, seed twice, disposable `down`/`up`). Formatting, `go vet ./...`,
+`go test ./...`, `go test -race ./...`, `go build ./...`, and configuration parsing
+also passed. Existing development databases, volumes, and Keycloak data were not
+modified. The updated GitHub Actions workflow has not yet been run remotely.
