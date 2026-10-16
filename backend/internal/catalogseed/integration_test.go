@@ -45,7 +45,7 @@ func TestCatalogLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	results, err := provider.Up(ctx)
-	if err != nil || len(results) != 3 {
+	if err != nil || len(results) != 4 {
 		t.Fatalf("initial migration: %v, %v", results, err)
 	}
 	results, err = provider.Up(ctx)
@@ -91,7 +91,12 @@ func TestCatalogLifecycle(t *testing.T) {
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The newest migration owns only cart tables; catalog data must survive.
+	// Orders roll back independently of carts and catalog.
+	count(101)
+	if _, err := provider.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The cart migration owns only cart tables; catalog data must survive.
 	count(101)
 	if _, err := provider.Down(ctx); err != nil {
 		t.Fatal(err)

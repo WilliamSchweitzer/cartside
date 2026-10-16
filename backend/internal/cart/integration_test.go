@@ -367,6 +367,10 @@ func TestPostgresCart(t *testing.T) {
 		check(t, owner, 1, 1)
 	})
 	t.Run("rollback cart migration preserves catalog and search", func(t *testing.T) {
+		// Remove the later orders migration before exercising cart rollback.
+		if _, err := provider.Down(ctx); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := provider.Down(ctx); err != nil {
 			t.Fatal(err)
 		}

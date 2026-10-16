@@ -251,3 +251,60 @@ func rollback(tx pgx.Tx) {
 	defer cancel()
 	_ = tx.Rollback(ctx)
 }
+
+// LockedCheckout is an opaque cart handle, valid only in its locking transaction.
+// Callers must not commit until checkout and clearing both succeed.
+type LockedCheckout struct {
+	id      string
+	tx      pgx.Tx
+	owner   auth.Principal
+	Version int64
+	Items   []CheckoutItem
+}
+type CheckoutItem struct {
+	ProductID string
+	Quantity  int
+}
+
+// LockForCheckout follows the mutation lock order: cart first, products later.
+// It never creates a missing cart and derives ownership from verified context.
+func (s *Service) LockForCheckout(ctx context.Context, tx pgx.Tx) (*LockedCheckout, error) {
+	owner, ok := auth.FromContext(ctx)
+	if !ok {
+		return nil, ErrUnauthenticated
+	}
+	c := &LockedCheckout{tx: tx, owner: owner}
+	err := tx.QueryRow(ctx, `SELECT id::text,version FROM carts WHERE owner_issuer=$1 AND owner_subject=$2 FOR UPDATE`, owner.Issuer, owner.Subject).Scan(&c.id, &c.Version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT product_id::text,quantity FROM cart_items WHERE cart_id=$1 ORDER BY product_id`, c.id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var i CheckoutItem
+		if err := rows.Scan(&i.ProductID, &i.Quantity); err != nil {
+			return nil, err
+		}
+		c.Items = append(c.Items, i)
+	}
+	return c, rows.Err()
+}
+
+// ClearForCheckout consumes the locked cart and advances its version exactly once.
+func (s *Service) ClearForCheckout(ctx context.Context, c *LockedCheckout) error {
+	owner, ok := auth.FromContext(ctx)
+	if !ok || owner != c.owner {
+		return ErrUnauthenticated
+	}
+	if _, err := c.tx.Exec(ctx, `DELETE FROM cart_items WHERE cart_id=$1`, c.id); err != nil {
+		return err
+	}
+	_, err := c.tx.Exec(ctx, `UPDATE carts SET version=version+1 WHERE id=$1`, c.id)
+	return err
+}

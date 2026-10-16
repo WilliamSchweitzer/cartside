@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Checkout, other business modules, order authorization, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. Checkout/order HTTP endpoints and UI, order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -51,7 +51,7 @@ The incoming application routes and internal AI route have separate policies, in
 
 ### Authentication and access
 
-APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go independently verifies the access token forwarded by APISIX and serves the current identity. Cart operations scope ownership to the verified issuer and subject; cart HTTP endpoints enforce this identity; order authorization remains planned.
+APISIX manages the OIDC flow with Keycloak and maintains the browser session. React does not manage OIDC tokens. Go independently verifies the access token forwarded by APISIX and serves the current identity. Cart operations scope ownership to the verified issuer and subject; cart HTTP endpoints enforce this identity; checkout scopes orders to that same verified identity; order browsing and its HTTP authorization remain planned.
 
 Go rejects forged identity headers and verifies signatures and claims independently. A valid access token can authenticate directly to Go; network isolation remains planned. Session configuration and state-changing requests must account for cookie security and CSRF protection. Registration, authentication callbacks, and operational health routes require deliberate routing exceptions.
 
@@ -73,7 +73,7 @@ Modules interact through defined operations rather than directly modifying anoth
 
 ### Checkout consistency
 
-The orders module coordinates checkout with cart and catalog operations.
+The implemented orders module coordinates simulated checkout with cart and catalog operations.
 
 - Save the order and clear the cart in one database transaction.
 - Preserve the cart if the transaction fails.
@@ -82,7 +82,7 @@ The orders module coordinates checkout with cart and catalog operations.
 - Associate checkout with the cart version the customer reviewed; reject stale attempts.
 - Serialize checkout and cart mutations through a consistent cart-locking strategy.
 
-Retrying the same checkout uses the same key. A changed cart requires a new checkout attempt. Database constraints and transaction boundaries enforce these rules alongside application validation.
+Retrying a completed checkout uses the same key and original input, even if the cart has since changed. A newly reviewed cart requires a new checkout attempt. Database constraints and transaction boundaries enforce these rules alongside application validation.
 
 ## Repository organization
 
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; checkout remains planned. See the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; checkout HTTP endpoints and UI remain planned. See the gateway authentication section below.
 
 ### Configuration
 
@@ -410,7 +410,7 @@ Remaining manual checklist, on a machine where the documented ports are free:
 ## Later milestones
 
 - Add AI suggestions and explicit customer acceptance.
-- Implement simulated checkout and retry protections.
+- Expose the implemented simulated checkout operations through authenticated HTTP and UI milestones.
 - Prepare deployment and managed secret delivery.
 
 Building a custom Go OIDC provider is a potential separate learning milestone after the application works with Keycloak.
@@ -520,7 +520,7 @@ In APISIX's rewrite phase, `serverless-pre-function` (priority 10000) clears cli
 
 Go uses `github.com/coreos/go-oidc/v3` v3.14.1 with an explicit RS256 allowlist, signature verification, exact issuer and backend audience checks, required unexpired expiration and nonempty subject, and validation of `nbf` and `iat` when present. No positive clock-skew allowance is applied by the application; keep clocks synchronized. The reusable remote JWKS set caches keys and fetches again when the signing key changes. HTTP key retrieval has a three-second client timeout, redirects disabled, and verification has a four-second request deadline. A known cached key can verify during an outage; an unverifiable token fails closed. Verification errors and token values are never logged or returned. Only the verified subject and issuer enter the request context.
 
-The durable external identity is **(issuer, subject)**, never email. There is no application user table; catalog schema migrations are separate from identity. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. The cart module now scopes all operations to this verified principal; order authorization remains planned. Cart HTTP mutations now require the CSRF header documented below.
+The durable external identity is **(issuer, subject)**, never email. There is no application user table; catalog schema migrations are separate from identity. Gateway authentication establishes a browser session; Go token validation establishes a cryptographically verified caller. The cart module now scopes all operations to this verified principal; checkout scopes orders to that same verified identity; order browsing and its HTTP authorization remain planned. Cart HTTP mutations now require the CSRF header documented below.
 
 Local HTTP, insecure development cookie settings, and reachable host ports remain limitations. **A valid access token can authenticate directly to Go using X-Access-Token.** Network isolation and gateway-exclusive access are not implemented. Direct Vite also remains reachable. Tokens, session cookies and administrator credentials need trusted HTTPS transport and appropriate network controls in deployment. Local JWT validation does not immediately revoke an already issued access token on browser logout; it remains usable until expiration unless a future revocation policy is added. React receives no raw tokens and never stores them; the browser carries APISIX's encrypted HttpOnly session cookie.
 
@@ -832,15 +832,14 @@ migrated or reseeded.
   for line totals and subtotal; cart_items stores no prices. The subtotal **includes
   unavailable items** and is not a checkout guarantee or an inventory reservation.
   A catalog price/availability change appears on the next read without reseeding
-  and without changing the cart's content version. Order price snapshots remain
-  future work. Items are returned in deterministic product-UUID order.
+  and without changing the cart's content version. Orders persist immutable price snapshots during checkout. Items are returned in deterministic product-UUID order.
 
 Every mutation uses a bounded five-second, READ COMMITTED transaction and selects
 the owner's cart row **FOR UPDATE** before inspecting or changing items. Add first
 inserts the cart with `ON CONFLICT (owner_issuer, owner_subject) DO NOTHING`, so
 concurrent first additions converge on one row and then serialize. The row lock
 prevents lost increments and quantity-limit races, and provides the lock to reuse
-for future checkout. Each actual content change advances the bigint cart version
+for checkout. Each actual content change advances the bigint cart version
 once, in the same transaction as the item write. No-ops, domain rejections, and
 rolled-back writes do not advance it. A failed first addition rolls back the
 provisional cart too. Mutations never retry themselves: Add is not idempotent.
@@ -854,7 +853,7 @@ check. If an update already holds the product lock, the mutation waits and check
 the updated availability after it commits. The check reserves no inventory;
 availability can change immediately after cart commit. Reductions/removals need
 no product lock. Future code that needs both resources must preserve this lock
-order; multi-product locking will also need a consistent product order.
+order; checkout locks multiple products in ascending UUID order.
 
 `Get` uses a bounded five-second read-only REPEATABLE READ transaction and
 catalog's `GetInTx` operation so cart version, quantities, and product prices come
@@ -980,7 +979,7 @@ Errors use `{"error":"message"}`: 400 invalid input/quantity, 401 missing or
 invalid authentication, 403 failed CSRF checks, 404 missing product or existing
 cart item, 409 unavailable product for an increase, 413 oversized body, 415 wrong
 media type, and 503 operational failure. Internal error details are not exposed.
-The cart UI is implemented below; checkout remains planned.
+The cart UI is implemented below; checkout HTTP endpoints and UI remain planned.
 
 
 ## Storefront cart milestone (implemented)
@@ -1074,3 +1073,82 @@ unchanged. Verification cart items were removed and the accounts signed out;
 new test identities and their empty carts remain. No developer cart was used.
 The live persistence/ownership verification gap is resolved. Screen-reader testing
 remains unperformed; the automated failure-path coverage above still applies.
+
+
+### Simulated checkout operations
+
+`internal/orders.Service.Checkout` is a Go operation only. Migration
+`00004_orders.sql` adds simulated orders and immutable item snapshots; there are
+no order/checkout HTTP routes or frontend changes. No payment, tax, shipping,
+delivery, inventory reservation, AI, or idempotency expiry/cleanup is implemented.
+Apply migrations with the existing `go run ./cmd/migrate up` command.
+
+The input contains a case-sensitive idempotency key (1–128 printable ASCII
+characters without spaces), expected nonnegative cart version, and nonempty
+reviewed product IDs, quantities (1–99), and nonnegative unit prices in cents.
+UUIDs are canonicalized, items sorted by product UUID, and duplicates rejected.
+A SHA-256 fingerprint covers a versioned canonical JSON representation of the
+expected cart version and all reviewed IDs, quantities, and prices. Item order
+and UUID casing do not change the fingerprint. Reviewed values are preconditions;
+prices, names, package labels, currency, and totals come from locked catalog data.
+Money uses checked int64 cents. Current catalog int32 prices and bounded
+quantities permit wide line totals; multiplication and sum overflow are checked
+before arithmetic, and database constraints enforce valid cents and line totals.
+
+Ownership is derived only from `auth.FromContext`. Each attempt uses one bounded
+five-second READ COMMITTED pgx transaction, shared with narrow cart operations
+and catalog's existing `GetForShare`. Checkout first looks up an order by verified
+issuer, subject, and key, then locks the owner's existing cart FOR UPDATE and
+rechecks the key. It rejects missing/empty carts, stale versions, mismatched
+membership/quantities, unavailable products, and changed prices. Product rows
+are locked FOR SHARE in ascending UUID order until commit. Order/item inserts,
+cart clearing, and exactly one cart-version increment commit atomically. Any
+failure rolls back the whole transaction; independent one-second rollback cleanup
+releases locks even after cancellation. Cart mutations retain their existing API
+and use the same cart-before-product lock order.
+
+The database uniquely constrains issuer + subject + idempotency key. Concurrent
+same-key requests converge on one confirmation; different keys for one reviewed
+cart can produce at most one order. Successful same-key/same-fingerprint replay
+returns the original snapshots before checking the current cart, including after
+cart changes or catalog edits/deletion. Different input returns
+`orders.ErrIdempotencyConflict`. Orders have UUID IDs, `SIM-` confirmation IDs,
+creation timestamps, a `simulated` kind, and USD totals. Item product UUIDs have
+no catalog foreign key, so history survives deletion. Database triggers reject
+updates and deletes of order records and snapshots.
+
+Domain errors are exported sentinels usable with `errors.Is`: unauthenticated,
+invalid input, idempotency conflict, empty cart, stale version, reviewed-item
+mismatch, unavailable product, changed price, and overflow. Storage failures
+return generic `ErrStorage`; caller cancellation/deadlines remain context errors.
+A commit error can be ambiguous: checkout never automatically retries a commit
+or creates a new key. Callers retry with the original key and input to resolve
+the outcome safely.
+
+From `backend/`, run the default checks above plus this explicit suite against
+its own **new empty disposable PostgreSQL 17 database**, never `DATABASE_URL`:
+
+```sh
+CARTSIDE_TEST_DATABASE_URL='postgres://test_user:disposable_password@127.0.0.1:TEST_PORT/orders_test?sslmode=disable' \
+  go test -tags=integration -race ./internal/orders -run TestPostgresCheckout -count=1 -v
+```
+
+The integration suite refuses nonempty databases and leaves test data behind.
+It verifies confirmations, snapshots, cart clearing/versioning, replay after cart
+and catalog changes/deletion, conflicting reuse, identity-pair isolation,
+precondition failures, concurrent same/different-key checkout, wide integer cents,
+and version-overflow rollback. A controlled cart-version constraint failure after
+order insertion and cart deletion proves both writes roll back together. Unit
+tests cover canonical fingerprints and monetary multiplication/addition overflow;
+actual monetary int64 overflow would require impractical cart sizes under the
+current catalog price and quantity constraints. Cart and catalogseed migration
+rollback tests include the new migration; each integration package needs its own
+fresh database.
+
+Checkout milestone verification passed: formatting, `git diff --check`,
+`go vet ./...`, default unit tests, `go test -race ./...`, `go build ./...`,
+and all four explicit integration packages (orders, cart, catalog, catalogseed)
+with the race detector against separate fresh databases in a disposable
+PostgreSQL 17.10 container on an ephemeral loopback port. Developer databases,
+volumes, and application services were untouched. No HTTP/frontend changes,
+commit, push, or deployment were performed.
