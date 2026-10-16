@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import Catalog from './Catalog'
 import Cart from './Cart'
+import Checkout from './Checkout'
 import { useCart } from './useCart'
 
-type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
+export type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
 
-function SignedInIdentity() {
-  const [identity, setIdentity] = useState<Identity>({ state: 'loading' })
+function SignedInIdentity({ identity, setIdentity }: { identity: Identity; setIdentity: (value: Identity) => void }) {
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
@@ -33,7 +33,7 @@ function SignedInIdentity() {
     }
     void load()
     return () => { active = false; controller.abort(); window.clearTimeout(timeout) }
-  }, [attempt])
+  }, [attempt, setIdentity])
   return <section className="identity" aria-label="Signed-in identity">
     <div role="status" aria-live="polite">
       {identity.state === 'loading' && <p>Loading identity…</p>}
@@ -57,7 +57,8 @@ const messages: Record<Readiness, { title: string; detail: string }> = {
 }
 
 export default function App() {
-  const cart = useCart()
+  const cart = useCart(true)
+  const [identity, setIdentity] = useState<Identity>({ state: 'loading' })
   const [readiness, setReadiness] = useState<Readiness>('loading')
   const [attempt, setAttempt] = useState(0)
 
@@ -99,7 +100,7 @@ export default function App() {
     <main>
       <header className="site-header">
         <a className="brand" href="/">Cartside<span>Groceries for your everyday</span></a>
-        <div className="account"><SignedInIdentity /><a href="/auth/logout">Sign out</a></div>
+        <div className="account"><SignedInIdentity identity={identity} setIdentity={setIdentity} /><a href="/auth/logout">Sign out</a></div>
       </header>
       <div className="welcome">
         <p className="eyebrow">Your neighborhood essentials</p>
@@ -110,6 +111,7 @@ export default function App() {
       <a href="#cart">Go to your cart</a>
       <Catalog cart={cart} />
       <Cart state={cart} />
+      <Checkout state={cart} identity={identity} />
       <details className="diagnostics">
         <summary>Service diagnostics</summary>
       <section aria-labelledby="readiness-heading">

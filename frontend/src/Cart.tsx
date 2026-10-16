@@ -37,7 +37,7 @@ function Item({ item, state }: { item: CartItem; state: CartState }) {
 }
 export default function Cart({ state }: { state: CartState }) {
   return <section className="cart" aria-labelledby="cart-heading" id="cart">
-    <h2 id="cart-heading">Your cart</h2>
+    <h2 id="cart-heading" tabIndex={-1}>Your cart</h2>
     <div role="status" aria-live="polite" aria-atomic="true"><p>{state.message}</p></div>
     {state.expired && <p><a href="/auth/logout">Return to sign-in</a></p>}
     <button className="secondary" disabled={state.busy} onClick={() => void state.refresh()}>Refresh cart</button>

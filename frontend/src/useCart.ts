@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { cartRequest, CartError, cartErrorMessage } from './cartApi'
 import type { Cart } from './cartApi'
 
-export function useCart() {
+export function useCart(initialCheckoutLock = false) {
+  const checkoutLock = useRef(initialCheckoutLock)
+  const [checkoutLocked, setCheckoutLocked] = useState(initialCheckoutLock)
+  function lockCheckout() {
+    if (guard.current) return false
+    checkoutLock.current = true
+    setCheckoutLocked(true)
+    return true
+  }
+  function unlockCheckout() { checkoutLock.current = false; setCheckoutLocked(false) }
   const [cart, setCart] = useState<Cart>()
   const [busy, setBusy] = useState(true)
   const [blocked, setBlocked] = useState(true)
@@ -23,7 +32,7 @@ export function useCart() {
       setBlocked(false)
       setExpired(false)
       setMessage(prefix || 'Cart refreshed.')
-      return true
+      return result
     } catch (error) {
       if (!mounted.current || ticket !== generation.current) return
       ready.current = false
@@ -50,10 +59,10 @@ export function useCart() {
     guard.current = true
     setBusy(true)
     setMessage('Loading cart…')
-    try { await read() } finally { guard.current = false; if (mounted.current) setBusy(false) }
+    try { return await read() } finally { guard.current = false; if (mounted.current) setBusy(false) }
   }
   async function mutate(method: 'POST' | 'PUT' | 'DELETE', id: string, name: string, quantity?: number) {
-    if (guard.current || !ready.current) return
+    if (checkoutLock.current || guard.current || !ready.current) return
     guard.current = true
     ++generation.current // Any read begun before this change is obsolete.
     setBusy(true)
@@ -79,6 +88,6 @@ export function useCart() {
       }
     } finally { guard.current = false; if (mounted.current) setBusy(false) }
   }
-  return { cart, busy, blocked, expired, message, refresh, mutate }
+  return { cart, busy, blocked: blocked || checkoutLocked, expired, message, refresh, mutate, lockCheckout, unlockCheckout }
 }
 export type CartState = ReturnType<typeof useCart>

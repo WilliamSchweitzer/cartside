@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint is implemented; checkout UI, order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented; order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## MVP
 
@@ -102,7 +102,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; the checkout API is implemented; checkout UI remains planned. See the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts. See the gateway authentication section below.
 
 ### Configuration
 
@@ -979,7 +979,7 @@ Errors use `{"error":"message"}`: 400 invalid input/quantity, 401 missing or
 invalid authentication, 403 failed CSRF checks, 404 missing product or existing
 cart item, 409 unavailable product for an increase, 413 oversized body, 415 wrong
 media type, and 503 operational failure. Internal error details are not exposed.
-The cart UI is implemented below; the checkout API is implemented; checkout UI remains planned.
+The cart UI is implemented below; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts.
 
 
 ## Storefront cart milestone (implemented)
@@ -1079,7 +1079,7 @@ remains unperformed; the automated failure-path coverage above still applies.
 
 `internal/orders.Service.Checkout` is exposed through the authenticated checkout
 HTTP adapter documented below. Migration `00004_orders.sql` adds simulated
-orders and immutable item snapshots. No checkout UI is implemented. No payment, tax, shipping,
+orders and immutable item snapshots. The checkout UI is documented below. No payment, tax, shipping,
 delivery, inventory reservation, AI, or idempotency expiry/cleanup is implemented.
 Apply migrations with the existing `go run ./cmd/migrate up` command.
 
@@ -1269,3 +1269,69 @@ and public health checks. An opaque mixed-case key containing a comma passed
 through unchanged. Test resources were removed; developer services, users,
 configuration, databases, and volumes were preserved. No frontend changes,
 commit, push, or deployment were performed.
+
+
+### Simulated checkout frontend
+
+A successfully loaded, nonempty cart offers **Review simulated order**. Review
+fetches the current cart and copies its product names, packages, quantities,
+unit prices, line totals, subtotal, and cart version. Unavailable products block
+confirmation. Local cart changes invalidate that review. Back to cart returns
+focus to the cart; **Place simulated order** is the explicit acceptance action.
+No payment, tax, delivery, or real purchase occurs.
+
+Before sending, the browser generates `crypto.randomUUID()`, serializes the
+reviewed version and complete IDs/quantities/prices once, and writes only that
+key and exact body to sessionStorage. Checkout uses relative `/api/checkout`,
+same-origin credentials, the existing CSRF header, and an eight-second timeout.
+A synchronous shared lock prevents cart mutations during review loading,
+submission, and unresolved outcomes. Checkout never retries automatically.
+
+A lost connection, timeout, server/gateway error, or invalid confirmation leaves
+the attempt unresolved. **Retry same checkout** reuses its key and exact body;
+cart reads and even an empty cart never establish that checkout failed. There
+is no start-over action. A 401 prompts sign-in while retaining the attempt for
+recovery after session renewal. Initial definitive 400/403 responses explain
+request/security rejection; documented cart/price/availability conflicts refresh
+the cart and require a new explicit review. An idempotency conflict retains the
+original attempt as an exceptional condition requiring investigation. A rejection
+after an earlier uncertain outcome conservatively retains that earlier attempt.
+
+Recovery waits for verified `/api/me` issuer + subject and reads only that
+identity's namespaced record. Another signed-in user cannot replay the record
+through the UI. Invalid records or unavailable restoration storage block checkout
+and mutations with an explanation. If writing/verifying recovery storage fails,
+no checkout request is sent. No tokens or identity assertions are stored.
+
+sessionStorage recovery is limited to the same browser tab/session and origin.
+Closing the tab, clearing site data, or losing browser storage can lose the
+recovery record; it is not a durable recovery service. A newly opened tab may
+inherit a copy from its opener. Independent tabs/devices do not coordinate UI
+locks; backend version checks and idempotency remain authoritative. Keep an
+unresolved tab and its storage until the same-key retry resolves the outcome.
+
+A validated immutable response displays its simulated confirmation, timestamp,
+item snapshots, and total. Only then is pending recovery data removed. Cart
+refresh is independent: failure retains the confirmation and disables mutations
+until a successful read-only Refresh cart. Continue shopping returns focus to
+search. Confirmation exists only in component state, so reloading after success
+does not provide order history. If recovery-record removal fails after success,
+the UI explains that a later reload may safely replay the confirmed attempt.
+
+Frontend verification (2026-10-15): lint, type-check, 37 tests, and production
+build passed using Node 24. Tests cover review input, explicit acceptance,
+duplicate clicks, headers, timeouts, exact retries, reload/identity isolation,
+session renewal, storage failures, changed prices, cart locking, invalid/gateway
+responses, and confirmed checkout with failed cart refresh. Headless Chrome
+through the existing APISIX/Keycloak stack verified real registration/login,
+cart operations, keyboard review/confirmation and focus, 375/1280px layout,
+reload recovery with exact key/body reuse, Continue shopping, and logout.
+Checkout responses in that browser recovery check were controlled: the running
+host backend returned 404 for checkout, so live checkout persistence/replay could
+not be verified in this milestone. Existing services/configuration/data were
+preserved; new verification identities remain (one initial probe cart remains;
+the controlled run's cart was emptied). Screen-reader and live session-expiry
+browser testing remain unperformed; session renewal is covered in frontend tests.
+Remaining shopping gaps include live frontend-to-checkout verification against
+an updated backend, order browsing/history, AI suggestions/chat, live inventory,
+and cross-tab/device coordination. Payments and delivery remain outside scope.
