@@ -9,3 +9,5 @@
 !backend/internal/
 !backend/internal/mockai/
 !backend/internal/mockai/**
+!backend/internal/aiprotocol/
+!backend/internal/aiprotocol/**

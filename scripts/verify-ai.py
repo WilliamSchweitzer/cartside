@@ -98,6 +98,16 @@ def main():
             assert 'usage' not in result and len(response) <= 2048
             assert calls() == before+1
             print('Authenticated request traversed ai-proxy; model/size/namespace restrictions passed', flush=True)
+            candidates = [dict(product_id='12345678-1234-1234-1234-123456789012', name='Demo oats', package_label='1 bag')]
+            grounded = dict(body, messages=[dict(role='user', content=json.dumps(dict(version=1, scenario='breakfast for two', candidates=candidates)))])
+            code, response = request(grounded)
+            assert code == 200 and len(response) <= 2048
+            structured = json.loads(json.loads(response)['choices'][0]['message']['content'])
+            assert structured['version'] == 1 and structured['text'].startswith('SIMULATED:')
+            assert structured['suggestions'] == [dict(product_id=candidates[0]['product_id'], quantity=1, reason='Demo scenario catalog candidate.')]
+            assert calls() == before+2
+            print('Structured candidate-grounded scenario passed through APISIX', flush=True)
+
             for scenario, expected in [('malformed', 200), ('rate-limit', 429), ('server-error', 500), ('delay', 504)]:
                 services['mock-ai']['environment']['MOCK_SCENARIO'] = scenario
                 config.write_text(json.dumps(compose))

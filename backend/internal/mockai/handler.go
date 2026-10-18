@@ -4,6 +4,7 @@ package mockai
 import (
 	"encoding/json"
 	"errors"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/aiprotocol"
 	"io"
 	"net/http"
 	"strings"
@@ -11,10 +12,10 @@ import (
 	"time"
 )
 
-const Model = "cartside-mock-v1"
+const Model = aiprotocol.Model
 const ProviderCredential = "Bearer cartside-local-fake-provider-only"
-const MaxRequestBytes = 8192
-const MaxResponseBytes = 2048
+const MaxRequestBytes = aiprotocol.MaxRequestBytes
+const MaxResponseBytes = aiprotocol.MaxResponseBytes
 
 type Message struct {
 	Role    string `json:"role"`
@@ -102,6 +103,37 @@ func New(testMode bool, scenario string) (http.Handler, error) {
 		case "snacks for a picnic":
 			content = "SIMULATED: For picnic snacks, consider apples, crackers, and cheese. This is a mock response, not catalog-backed advice."
 		}
+		// Structured requests select only supplied candidates; bare demo smoke
+		// requests retain the original text contract.
+		var input aiprotocol.Input
+		if strings.HasPrefix(last, "{") {
+			// Use original case: product context and identifiers are data.
+			raw := ""
+			for _, m := range req.Messages {
+				if m.Role == "user" {
+					raw = m.Content
+				}
+			}
+			if aiprotocol.Strict([]byte(raw), &input) != nil || input.Version != 1 || len(input.Candidates) > 6 {
+				http.Error(w, "invalid candidate context", 400)
+				return
+			}
+			output := aiprotocol.Output{Version: 1, Text: "SIMULATED: Demo catalog suggestions. Dietary and allergen suitability is unverified.", Suggestions: []aiprotocol.Suggestion{}}
+			seen := map[string]bool{}
+			for _, p := range input.Candidates {
+				if p.ProductID == "" || seen[p.ProductID] {
+					http.Error(w, "invalid candidates", 400)
+					return
+				}
+				seen[p.ProductID] = true
+				if len(output.Suggestions) < 5 {
+					output.Suggestions = append(output.Suggestions, aiprotocol.Suggestion{ProductID: p.ProductID, Quantity: 1, Reason: "Demo scenario catalog candidate."})
+				}
+			}
+			encoded, _ := json.Marshal(output)
+			content = string(encoded)
+		}
+
 		// Usage is intentionally omitted: the pinned plugin accepts its absence.
 		writeJSON(w, map[string]any{"id": "chatcmpl-cartside-simulated", "object": "chat.completion", "created": 0, "model": Model, "choices": []any{map[string]any{"index": 0, "message": Message{Role: "assistant", Content: content}, "finish_reason": "stop"}}})
 	})

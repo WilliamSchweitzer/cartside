@@ -78,7 +78,7 @@ def main():
         try:
             print('Starting isolated infrastructure', flush=True)
             run(command + ['up', '-d', '--wait', '--wait-timeout', '180'])
-            for package, test in [('catalogseed', 'TestCatalogLifecycle'), ('catalog', 'TestPostgresCatalog'), ('cart', 'TestPostgresCart'), ('orders', 'TestPostgresCheckout'), ('httpapi', 'TestPostgresCheckoutHTTP')]:
+            for package, test in [('catalogseed', 'TestCatalogLifecycle'), ('catalog', 'TestPostgresCatalog'), ('cart', 'TestPostgresCart'), ('orders', 'TestPostgresCheckout'), ('httpapi', 'TestPostgresCheckoutHTTP'), ('shoppingassistant', 'TestPostgresAssistant')]:
                 database = 'test_' + package
                 run(command + ['exec', '-T', 'postgres', 'createdb', '-U', 'e2e', database])
                 env['CARTSIDE_TEST_DATABASE_URL'] = env['DATABASE_URL'].replace('/e2e?', '/'+database+'?')

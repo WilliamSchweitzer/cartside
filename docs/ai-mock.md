@@ -1,10 +1,83 @@
 # First AI milestone: deterministic local protocol testing
 
-Implemented: a host client → APISIX 3.14.1 `ai-proxy` → local Go mock service.
-There are no external model calls, real provider keys, browser AI features,
-product IDs, catalog grounding, cart suggestions, or cart mutations. The mock
-returns shopping text only. Application Go/React still run on the host; the
-standalone infrastructure command `backend/cmd/mock-ai` runs in Compose.
+Implemented: an internal Go shopping assistant → APISIX 3.14.1 `ai-proxy` →
+local Go mock service. No external model calls, browser AI features, public
+assistant endpoint, persistence, or cart/order mutations. Go/React run on the
+host; `backend/cmd/mock-ai` runs in Compose.
+
+## Catalog-grounded internal operation
+
+`shoppingassistant.New(catalogRepository, client).Suggest(ctx, request)` accepts
+one request of 1–256 bytes. Construct the client explicitly with
+`shoppingassistant.NewClient(gatewayURL, serviceCredential)`. Safe example names
+are `CARTSIDE_AI_GATEWAY_URL` and `CARTSIDE_AI_SERVICE_KEY` in `.env.example`;
+`cmd/api` does not consume them yet. Never supply these to Vite. The URL must
+have the exact `/internal/ai/chat/completions` path with no credentials, query,
+or fragment. HTTP is for local development; use HTTPS beyond a trusted host.
+The client has no cookie jar, redirects, identity input, or automatic retries.
+It bounds requests to 8192 bytes, responses to 2048 bytes, headers to 4096 bytes,
+and each HTTP call to two seconds; the entire operation has a five-second
+context deadline. No limit changes were needed.
+
+Go normalizes whitespace and case, then uses this explicit mapping in
+`internal/shoppingassistant/assistant.go`:
+
+| Exact demo request | Catalog search terms |
+| --- | --- |
+| breakfast for two | oats, milk, bananas |
+| vegetarian dinner | rice, beans, broccoli |
+| snacks for a picnic | apples, crackers, cheese |
+
+This is deterministic demo behavior, not language understanding. Each term uses
+catalog `List` with limit 2, offset 0; unavailable products are omitted and IDs
+are deduplicated, yielding at most six candidates. No catalog-wide query is
+used. Unsupported requests and empty candidate sets return local clarification
+with an empty suggestions array and no model call. Names/descriptions do not
+establish dietary or allergen suitability; even the vegetarian demo offers no
+verified suitability. No user identity, raw customer request, cookies, tokens,
+cart, order history, full catalog, or product prices go to the provider.
+
+The fixed non-streaming Chat Completions request contains one user message whose
+content is JSON:
+
+```json
+{"version":1,"scenario":"breakfast for two","candidates":[{"product_id":"<catalog UUID>","name":"Rolled Oats","package_label":"1 bag"}]}
+```
+
+Candidate names are bounded to 160 bytes and packages to 100. The mock selects
+the first five unique supplied candidates in order, quantity 1, with a short
+fixed reason; it contains no fixture UUIDs. The completion message content is
+itself a JSON object:
+
+```json
+{"version":1,"text":"SIMULATED: Demo catalog suggestions. Dietary and allergen suitability is unverified.","suggestions":[{"product_id":"<supplied UUID>","quantity":1,"reason":"Demo scenario catalog candidate."}]}
+```
+
+Go treats the completion envelope and content as untrusted: unknown/duplicate
+fields, nulls, trailing content, wrong types, wrong model/version/role/finish,
+invalid IDs, duplicate selections, more than five suggestions, quantities outside
+integer 1–99, text over 400 bytes and reasons over 120 bytes are rejected. The
+client allows only candidate IDs. Catalog `Get` re-reads every selection; missing
+or unavailable products invalidate the whole result. Names, packages, integer
+cent prices, currency and availability come exclusively from these current
+PostgreSQL reads. Changed prices/names are refreshed, not taken from the model.
+Reads are current per product, not an atomic multi-product snapshot; future
+acceptance must validate again through cart operations.
+
+The future HTTP adapter will accept `{"request":"breakfast for two"}` (one
+1–256 byte request string, no conversation history) and return this business
+result. No route or HTTP status mapping is implemented yet:
+
+```json
+{"version":1,"provider":"simulated: cartside-mock-v1","text":"SIMULATED: ...","suggestions":[{"product_id":"<UUID>","quantity":1,"reason":"Demo scenario catalog candidate.","name":"Rolled Oats","package_label":"1 bag","price_cents":399,"currency":"USD","available":true}]}
+```
+
+Clarification uses the same contract with `suggestions: []`. Safe typed error
+codes are `invalid_input`, `payload_too_large`, `timeout`, `rate_limited`,
+`provider_unavailable`, `invalid_provider_output`, `catalog_unavailable`, and
+`catalog_changed`; errors never include URLs, credentials, prompts or upstream
+bodies. Future endpoints must add verified authentication, request limits and
+per-user controls before exposure. Suggestions cannot invoke mutations.
 
 ```mermaid
 flowchart LR
@@ -85,6 +158,7 @@ excludes `.env` and unrelated files from its build context.
 
 ## Supported deterministic scenarios
 
+For compatibility, bare-text smoke requests retain the original text-only demo contract.
 The latest user message is trimmed and matched case-insensitively. Earlier
 messages are validated but do not affect the answer. Every answer starts with
 `SIMULATED:` and all completion metadata is deterministic.
@@ -155,7 +229,7 @@ python3 -m venv /tmp/cartside-ai-checks
 /tmp/cartside-ai-checks/bin/python scripts/validate-config.py
 /tmp/cartside-ai-checks/bin/python scripts/verify-ai.py
 # Includes real Keycloak login, session-only AI denial, zero provider invocations,
-# all five DB integration packages, and the existing five shopping browser tests.
+# all six DB integration packages, and the existing five shopping browser tests.
 /tmp/cartside-ai-checks/bin/python scripts/e2e.py
 
 cd backend
@@ -189,7 +263,7 @@ tokenization, billing, TLS-to-provider behavior, or external error semantics hav
 been tested. No synthetic usage values are emitted.
 
 In 3.14.1 the AI driver passes malformed JSON through as HTTP 200 rather than
-rejecting it. Future application clients must validate the completion contract.
+rejecting it. The Go assistant independently validates the completion contract.
 For provider 429/5xx it returns the status without preserving the provider's body
 or `Retry-After`. The test expects those pinned behaviors. Timeouts are per socket
 operation and arbitrary provider response sizes are not capped by this plugin.
@@ -207,3 +281,30 @@ stack passed all five database integration packages and five Chromium shopping
 tests, including valid-session-only AI denial with zero provider calls.
 Developer configuration and persistent data were preserved. Live model provider
 compatibility and remote CI were not exercised.
+
+## Assistant milestone verification
+
+Run the Go commands above for unit/race checks. `scripts/verify-ai.py` additionally
+checks a structured candidate-grounded completion through the real gateway.
+`scripts/e2e.py` now includes the assistant integration package in its disposable
+database loop. For a separately provisioned **empty disposable database**:
+
+```sh
+cd backend
+CARTSIDE_TEST_DATABASE_URL='<disposable PostgreSQL URL>' go test -tags=integration -race ./internal/shoppingassistant -count=1
+```
+
+This test applies migrations, seeds catalog fixtures, checks all three scenarios
+against PostgreSQL, and verifies cart/order snapshots remain unchanged. Unit
+tests exercise product deletion/unavailability and refreshed catalog metadata,
+untrusted content, limits, timeout, rate limits, and single-attempt failures.
+No paid provider access is required.
+
+Verification for this milestone (2026-10-18): Go 1.24.0 formatting, vet, unit/race
+tests and build passed; configuration parsing and whitespace checks passed. All
+six integration packages passed with the race detector against separate fresh
+PostgreSQL 17.10 databases. Isolated APISIX/mock verification passed the original
+smoke scenarios, structured candidate selection, authentication, request limits,
+and malformed/rate-limit/server-error/timeout faults with one provider invocation
+each. Developer data was preserved and disposable containers/volumes removed.
+Frontend and full browser E2E checks were not rerun for this internal Go change.
