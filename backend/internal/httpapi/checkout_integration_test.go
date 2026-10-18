@@ -66,7 +66,7 @@ func TestPostgresCheckoutHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Code != 409 || !strings.Contains(failed.Body.String(), `"code":"prices_changed"`) || after.Version != before.Version || len(after.Items) != 1 {
+	if failed.Header().Get("X-Cartside-Checkout-Rejection") != "no-matching-order" || failed.Code != 409 || !strings.Contains(failed.Body.String(), `"code":"prices_changed"`) || after.Version != before.Version || len(after.Items) != 1 {
 		t.Fatal("failed checkout did not preserve cart", failed.Code, failed.Body.String())
 	}
 	first := send(body)
@@ -82,7 +82,7 @@ func TestPostgresCheckoutHTTP(t *testing.T) {
 		t.Fatal("cart not cleared once", cleared)
 	}
 	conflict := send(strings.Replace(body, `"quantity":2`, `"quantity":1`, 1))
-	if conflict.Code != 409 || !strings.Contains(conflict.Body.String(), `"code":"idempotency_conflict"`) {
+	if conflict.Header().Get("X-Cartside-Checkout-Rejection") != "" || conflict.Code != 409 || !strings.Contains(conflict.Body.String(), `"code":"idempotency_conflict"`) {
 		t.Fatal(conflict.Code, conflict.Body.String())
 	}
 }

@@ -60,6 +60,10 @@ func checkoutHandler(service Checkout) http.HandlerFunc {
 		}
 		result, err := service.Checkout(r.Context(), in)
 		if err != nil {
+			// These errors follow both same-key lookups under the cart lock.
+			if errors.Is(err, orders.ErrEmptyCart) || errors.Is(err, orders.ErrStaleVersion) || errors.Is(err, orders.ErrReviewedItems) || errors.Is(err, orders.ErrUnavailable) || errors.Is(err, orders.ErrPriceChanged) {
+				w.Header().Set("X-Cartside-Checkout-Rejection", "no-matching-order")
+			}
 			checkoutError(w, err)
 			return
 		}

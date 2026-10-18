@@ -8,6 +8,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     allowedHosts: ['localhost', 'host.docker.internal'],
-    ws: { protocol: 'ws', host: 'localhost', clientPort: 9080 },
+    // Derive the proxied WebSocket port from the browser origin (also supports isolated E2E ports).
+    ws: { protocol: 'ws', host: 'localhost' },
   },
 })

@@ -13,7 +13,7 @@ export function validAttempt(value: unknown): value is Attempt {
     if (!a || !uuid(a.key) || typeof a.body !== 'string' || Object.keys(a).sort().join(',') !== 'body,key') return false
     const b = JSON.parse(a.body)
     const ids = new Set<string>()
-    return b !== null && typeof b === 'object' && Object.keys(b).sort().join(',') === 'expected_cart_version,items' && cents(b.expected_cart_version) && Array.isArray(b.items) && b.items.length > 0 && b.items.every((i: OrderItem) => {
+    return a.body === JSON.stringify(b) && b !== null && typeof b === 'object' && Object.keys(b).sort().join(',') === 'expected_cart_version,items' && cents(b.expected_cart_version) && Array.isArray(b.items) && b.items.length > 0 && b.items.every((i: OrderItem) => {
       if (!i || Object.keys(i).sort().join(',') !== 'product_id,quantity,unit_price_cents' || !uuid(i.product_id) || ids.has(i.product_id.toLowerCase()) || !Number.isInteger(i.quantity) || i.quantity < 1 || i.quantity > 99 || !cents(i.unit_price_cents)) return false
       ids.add(i.product_id.toLowerCase()); return true
     })
@@ -34,7 +34,7 @@ export function validOrder(value: unknown, attempt: Attempt): value is Order {
   return remaining.size === 0 && cents(total) && total === o.total_cents
 }
 export class CheckoutError extends Error {
-  constructor(public status: number, public code: string) { super('Checkout rejected') }
+  constructor(public status: number, public code: string, public noMatchingOrder = false) { super('Checkout rejected') }
 }
 export async function submitCheckout(attempt: Attempt): Promise<Order> {
   const controller = new AbortController()
@@ -45,7 +45,9 @@ export async function submitCheckout(attempt: Attempt): Promise<Order> {
     if (response.status !== 200) {
       let code = ''
       try { code = (await response.json()).code } catch { /* Gateway responses need not be JSON. */ }
-      throw new CheckoutError(response.status, code)
+      throw new CheckoutError(response.status, code,
+        response.status === 409 && response.headers.get('X-Cartside-Checkout-Rejection') === 'no-matching-order' &&
+        response.headers.get('Content-Type')?.split(';')[0] === 'application/json')
     }
     const body: unknown = await response.json()
     if (!validOrder(body, attempt)) throw new Error('Invalid order confirmation')

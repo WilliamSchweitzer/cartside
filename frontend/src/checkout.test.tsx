@@ -11,7 +11,7 @@ const cart: Cart = { version: 7, items: [{ product, quantity: 2, line_total_cent
 const order = { id: 'd550df71-4280-480b-a733-1ee7e24c1ab5', confirmation: 'SIM-test', kind: 'simulated', created_at: '2026-10-15T12:00:00Z', currency: 'USD', total_cents: 250, items: [{ product_id: product.id, name: 'Apples snapshot', package_label: 'bag snapshot', quantity: 2, unit_price_cents: 125, line_total_cents: 250 }] }
 const identity: Identity = { state: 'ready', issuer: 'issuer', subject: 'alice' }
 const key = storageKey('issuer', 'alice')
-const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status })
+const json = (v: unknown, status = 200, verified = false) => new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', ...(verified ? { 'X-Cartside-Checkout-Rejection': 'no-matching-order' } : {}) } })
 function Harness({ user = identity }: { user?: Identity }) {
   const state = useCart(true)
   return <><button onClick={() => void state.mutate('POST', product.id, product.name, 1)}>Force mutation</button><button disabled={state.busy || state.blocked} onClick={() => void state.mutate('POST', product.id, product.name, 1)}>Add</button><CartView state={state} /><Checkout state={state} identity={user} /></>
@@ -129,7 +129,7 @@ describe('simulated checkout', () => {
     expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
   })
   it('requires another explicit review after changed prices', async () => {
-    const s = setup(); s.checkout(async () => json({ code: 'prices_changed' }, 409))
+    const s = setup(); s.checkout(async () => json({ code: 'prices_changed' }, 409, true))
     render(<Harness />); await place()
     await screen.findByText(/Checkout rejected \(prices_changed\)/)
     expect(screen.queryByText('Place simulated order')).toBeNull()
@@ -165,13 +165,13 @@ describe('simulated checkout', () => {
     expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
     expect(sessionStorage.getItem(key)).not.toBeNull()
   })
-  it.each([400, 403])('explains definitive HTTP %i rejection and requires new review', async status => {
+  it.each([400, 403])('preserves unverified HTTP %i rejection for same-key recovery', async status => {
     const s = setup(); s.checkout(async () => json(status === 400 ? { code: 'invalid_input' } : { error: 'CSRF protection required' }, status))
     render(<Harness />); await place()
-    await screen.findByText(status === 400 ? /Checkout request was invalid/ : /Security check rejected checkout/)
-    expect(sessionStorage.getItem(key)).toBeNull()
+    await screen.findByText(status === 400 ? /earlier outcome remains unresolved/ : /Security check rejected this retry/)
+    expect(sessionStorage.getItem(key)).not.toBeNull()
     expect(screen.queryByText('Place simulated order')).toBeNull()
-    await waitFor(() => expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(false))
+    expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
   })
   it('retains exceptional idempotency conflicts without a replacement attempt', async () => {
     const s = setup(); s.checkout(async () => json({ code: 'idempotency_conflict' }, 409))
@@ -196,4 +196,58 @@ describe('simulated checkout', () => {
     expect(sessionStorage.getItem(key)).not.toBeNull()
     expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
   })
+  it('releases an uncertain attempt only after a marked service rejection, requiring renewed review', async () => {
+    const s = setup(); s.checkout(async () => { throw new Error('lost') })
+    render(<Harness />); await place(); await screen.findByText(/Checkout outcome is unresolved/)
+    s.checkout(async () => json({ code: 'prices_changed' }, 409, true))
+    fireEvent.click(screen.getByText('Retry same checkout'))
+    await screen.findByText(/Checkout rejected/)
+    expect(sessionStorage.getItem(key)).toBeNull()
+    await waitFor(() => expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.queryByText('Place simulated order')).toBeNull()
+    await review(); expect(s.calls).toHaveLength(2)
+  })
+  it.each(['confirmation', 'rejection'])('ignores a late %s after the verified identity changes', async outcome => {
+    const s = setup(); let finish!: (r: Response) => void
+    s.checkout(() => new Promise(resolve => { finish = resolve }))
+    const view = render(<Harness />); await place()
+    view.rerender(<Harness user={{ state: 'ready', issuer: 'issuer', subject: 'bob' }} />)
+    await waitFor(() => expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(false))
+    await act(async () => finish(outcome === 'confirmation' ? json(order) : json({ code: 'prices_changed' }, 409, true)))
+    expect(screen.queryByText('SIM-test')).toBeNull()
+    expect(screen.queryByText(/Checkout rejected/)).toBeNull()
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+  })
+  it.each(['null', '{}', JSON.stringify({ key: 'bad', body: '{}' })])('never submits malformed stored record %s', async raw => {
+    const s = setup(); sessionStorage.setItem(key, raw); render(<Harness />)
+    await screen.findByText(/storage is unavailable or invalid/)
+    expect(s.calls).toHaveLength(0)
+  })
+
+  it('blocks storage read failures without checkout requests', async () => {
+    const s = setup()
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('disabled') })
+    render(<Harness />); await screen.findByText(/storage is unavailable or invalid/)
+    fireEvent.click(screen.getByText('Force mutation'))
+    expect(s.calls).toHaveLength(0)
+    expect(s.fetcher.mock.calls.every(([, init]) => init.method === 'GET')).toBe(true)
+  })
+  it('rejects ambiguous duplicate fields in stored request bodies without sending', async () => {
+    const s = setup()
+    const body = reviewBody(cart).replace('"expected_cart_version":7', '"expected_cart_version":6,"expected_cart_version":7')
+    sessionStorage.setItem(key, JSON.stringify({ key: crypto.randomUUID(), body }))
+    render(<Harness />); await screen.findByText(/storage is unavailable or invalid/)
+    expect(s.calls).toHaveLength(0)
+  })
+  it('keeps a marked rejected attempt locked when removing its record fails', async () => {
+    const s = setup(); s.checkout(async () => { throw new Error('lost') })
+    render(<Harness />); await place(); await screen.findByText(/Checkout outcome is unresolved/)
+    s.checkout(async () => json({ code: 'empty_cart' }, 409, true))
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('disabled') })
+    fireEvent.click(screen.getByText('Retry same checkout'))
+    await screen.findByText(/Could not clear rejected attempt/)
+    expect(sessionStorage.getItem(key)).not.toBeNull()
+    expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
+  })
+
 })

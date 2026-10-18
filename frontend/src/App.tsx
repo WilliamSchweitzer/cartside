@@ -57,7 +57,6 @@ const messages: Record<Readiness, { title: string; detail: string }> = {
 }
 
 export default function App() {
-  const cart = useCart(true)
   const [identity, setIdentity] = useState<Identity>({ state: 'loading' })
   const [readiness, setReadiness] = useState<Readiness>('loading')
   const [attempt, setAttempt] = useState(0)
@@ -109,9 +108,7 @@ export default function App() {
         <p className="browse-note">Build your grocery cart below.</p>
       </div>
       <a href="#cart">Go to your cart</a>
-      <Catalog cart={cart} />
-      <Cart state={cart} />
-      <Checkout state={cart} identity={identity} />
+      {identity.state === 'ready' && <Shopping key={JSON.stringify([identity.issuer, identity.subject])} identity={identity} />}
       <details className="diagnostics">
         <summary>Service diagnostics</summary>
       <section aria-labelledby="readiness-heading">
@@ -129,4 +126,11 @@ export default function App() {
       <footer>Cartside · Everyday starts here.</footer>
     </main>
   )
+}
+
+// Each verified identity owns a separate hook lifetime; old async work cannot
+// publish cart or checkout state into the next identity's storefront.
+function Shopping({ identity }: { identity: Identity }) {
+  const cart = useCart(true)
+  return <><Catalog cart={cart} /><Cart state={cart} /><Checkout state={cart} identity={identity} /></>
 }

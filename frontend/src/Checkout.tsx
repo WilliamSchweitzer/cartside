@@ -18,12 +18,18 @@ export default function Checkout({ state, identity }: { state: CartState; identi
   const [renew, setRenew] = useState(false)
   const guard = useRef(false)
   const heading = useRef<HTMLHeadingElement>(null)
+  const liveScope = useRef('')
+  const mounted = useRef(false)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const identityScope = identity.state === 'ready' ? storageKey(identity.issuer, identity.subject) : ''
+  useEffect(() => { liveScope.current = identityScope }, [identityScope])
   useEffect(() => {
     if (!identityScope || identityScope === scope) return
     // Restoration is read-only and happens only after /api/me verifies ownership.
+    let active = true
     const restore = () => {
-      setOrder(undefined); setReview(undefined); setPending(undefined); setScope(identityScope)
+      if (!active) return
+      setOrder(undefined); setReview(undefined); setPending(undefined); setBusy(false); setRenew(false); setScope(identityScope)
       try {
         const raw = sessionStorage.getItem(identityScope)
         if (raw !== null) {
@@ -35,21 +41,29 @@ export default function Checkout({ state, identity }: { state: CartState; identi
       } catch { state.lockCheckout(); setMessage('Checkout recovery storage is unavailable or invalid. Checkout and cart changes are blocked; restore access to this tab’s sessionStorage and reload.') }
     }
     void Promise.resolve().then(restore)
+    return () => { active = false }
   }, [identityScope, scope, state])
   useEffect(() => { if (review || pending || order) heading.current?.focus() }, [review, pending, order])
   const currentReview = review && !state.blocked && state.cart === review.source ? review.snapshot : undefined
   async function startReview() {
     if (guard.current || pending || !state.lockCheckout()) return
+    const owner = identityScope
     guard.current = true; setBusy(true); setOrder(undefined); setMessage('')
     try {
       const cart = await state.refresh()
+      if (!mounted.current || liveScope.current !== owner) return
       if (cart && cart.items.length) setReview({ snapshot: structuredClone(cart), source: cart })
       else setMessage('A nonempty, successfully refreshed cart is required for review.')
-    } finally { state.unlockCheckout(); guard.current = false; setBusy(false) }
+    } finally {
+      if (mounted.current && liveScope.current === owner) { state.unlockCheckout(); setBusy(false) }
+      guard.current = false
+    }
   }
   async function submit(existing?: Attempt) {
     if (guard.current || scope !== identityScope || !identityScope || (!existing && (!currentReview || state.busy || state.blocked)) || !state.lockCheckout()) return
     guard.current = true; setBusy(true); setRenew(false)
+    const owner = identityScope
+    const active = () => mounted.current && liveScope.current === owner
     let attempt = existing
     try {
       if (!attempt) {
@@ -64,20 +78,21 @@ export default function Checkout({ state, identity }: { state: CartState; identi
         setPending(attempt)
       }
       const result = await submitCheckout(attempt)
+      if (!active()) return
       setOrder(result); setPending(undefined); setReview(undefined)
       try { sessionStorage.removeItem(scope) } catch { setMessage('Order confirmed, but recovery storage could not be cleared. A reload may offer a safe replay of this same order.') }
       await state.refresh()
-      state.unlockCheckout()
+      if (active()) state.unlockCheckout()
     } catch (error) {
+      if (!active()) return
       if (error instanceof CheckoutError && error.status === 401) {
         setRenew(true); setMessage('Sign in again, then retry this same checkout. Its original request is preserved.')
-      } else if (error instanceof CheckoutError && ((error.status === 409 && conflicts.has(error.code)) || (error.status === 400 && error.code === 'invalid_input') || error.status === 403) && !existing) {
-        // Only a first attempt's definitive rejection can release the lock. A
-        // later rejection cannot establish the outcome of an earlier lost reply.
+      } else if (error instanceof CheckoutError && error.noMatchingOrder && conflicts.has(error.code)) {
+        // The service looked up the same key before rejecting the cart.
         try { sessionStorage.removeItem(scope) } catch { setMessage('Could not clear rejected attempt recovery data. Reload after restoring storage access.'); return }
         setPending(undefined); setReview(undefined)
-        setMessage(error.status === 403 ? 'Security check rejected checkout (CSRF). Refresh before reviewing again.' : error.status === 400 ? 'Checkout request was invalid. Refresh and review again.' : `Checkout rejected (${error.code}). Refreshing cart; review again before placing an order.`)
-        await state.refresh(); state.unlockCheckout()
+        setMessage(`Checkout rejected (${error.code}). Refreshing cart; review again before placing an order.`)
+        await state.refresh(); if (active()) state.unlockCheckout()
       } else {
         setMessage(error instanceof CheckoutError && error.code === 'idempotency_conflict'
           ? 'Exceptional idempotency conflict. The original attempt is retained; do not create a replacement order. Contact support.'
@@ -87,7 +102,7 @@ export default function Checkout({ state, identity }: { state: CartState; identi
               ? 'Invalid checkout request. The earlier outcome remains unresolved; its request is preserved for investigation.'
               : 'Checkout outcome is unresolved; the order may have been saved. Retry only this same checkout. Cart changes are blocked.')
       }
-    } finally { guard.current = false; setBusy(false) }
+    } finally { guard.current = false; if (active()) setBusy(false) }
   }
   return <section className="checkout" aria-labelledby="checkout-heading">
     <h2 id="checkout-heading" tabIndex={-1} ref={heading}>{order ? 'Simulated order confirmed' : pending ? 'Resolve simulated checkout' : 'Simulated checkout'}</h2>

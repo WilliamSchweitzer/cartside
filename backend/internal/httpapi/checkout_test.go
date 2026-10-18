@@ -183,3 +183,15 @@ func TestCheckoutSecurity(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestCheckoutRejectionEvidence(t *testing.T) {
+	ctx := checkoutContext(t, "https://issuer.example", "rejection-test")
+	for _, err := range []error{orders.ErrEmptyCart, orders.ErrStaleVersion, orders.ErrReviewedItems, orders.ErrUnavailable, orders.ErrPriceChanged, orders.ErrStorage, orders.ErrIdempotencyConflict, orders.ErrInvalidInput} {
+		w := httptest.NewRecorder()
+		checkoutHandler(&checkoutStub{err: err})(w, checkoutRequest(ctx, checkoutBody))
+		want := w.Code == http.StatusConflict && !errors.Is(err, orders.ErrIdempotencyConflict)
+		if got := w.Header().Get("X-Cartside-Checkout-Rejection") == "no-matching-order"; got != want {
+			t.Fatalf("error %v: rejection evidence=%v want=%v", err, got, want)
+		}
+	}
+}

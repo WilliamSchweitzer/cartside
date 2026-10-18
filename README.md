@@ -10,6 +10,37 @@ This is a personal learning project focused on Go application design, API gatewa
 
 Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented; order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
 
+## Non-AI stabilization gate
+
+The non-AI shopping foundation passed the stabilization gate on **2026-10-18**.
+The explicit [end-to-end guide](docs/e2e.md) describes the disposable environment,
+coverage, limitations, and recovery contract. The full-stack suite remains outside
+ordinary CI. AI integration has not been started.
+
+This review fixed indefinite locking after a marked same-key rejection, prevented
+unmarked gateway 403 responses from discarding recovery, rejected ambiguous stored
+request bodies, and scoped shopping state to the verified identity with guards
+against late checkout responses.
+
+Verification: Go 1.24.0 formatting, vet, unit tests, race tests, and build passed.
+Node 24.15.0 frontend lint, application/E2E type-check, 46 unit tests, and production
+build passed. All five existing integration packages (catalogseed, catalog, cart,
+orders, checkout HTTP) passed with the race detector against separate fresh
+databases. All five Chromium shopping tests passed against a new Compose project
+running PostgreSQL 17.10, APISIX 3.14.1, and Keycloak 26.8.1 with disposable users.
+Committed-response loss/replay, reload/session renewal, user isolation, failed cart
+refresh after success, and cart/price/availability conflicts were exercised live.
+JSON/YAML parsing, Compose startup validation, and diff whitespace checks passed.
+The runner removed its containers, volumes, and private configuration afterward;
+developer configuration and data were preserved. Earlier milestone notes below
+remain historical evidence.
+
+Remaining verification limitations: passive refresh-token expiry, screen readers,
+and browsers/devices beyond Chromium's desktop and 375px viewport checks were not
+exercised. Product limitations remain tab-scoped recovery, no confirmation history
+after a resolved reload, and no UI coordination across tabs/devices. These are
+separate from defects in the verified non-AI flow.
+
 ## MVP
 
 - Open registration and sign-in, required to access the storefront and chat.
@@ -114,7 +145,7 @@ Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed
 
 ### Setup instructions
 
-Use **Node.js 24 LTS** (24.x, including npm) for the frontend and Go 1.24.0 (matching `backend/go.mod`) for the backend; Docker Compose runs PostgreSQL 17.10. From the repository root:
+Use **Node.js 24 LTS** (24.15 or later within 24.x, including npm) for the frontend and Go 1.24.0 (matching `backend/go.mod`) for the backend; Docker Compose runs PostgreSQL 17.10. From the repository root:
 
 ```sh
 cp .env.example .env
@@ -1291,11 +1322,13 @@ A lost connection, timeout, server/gateway error, or invalid confirmation leaves
 the attempt unresolved. **Retry same checkout** reuses its key and exact body;
 cart reads and even an empty cart never establish that checkout failed. There
 is no start-over action. A 401 prompts sign-in while retaining the attempt for
-recovery after session renewal. Initial definitive 400/403 responses explain
-request/security rejection; documented cart/price/availability conflicts refresh
-the cart and require a new explicit review. An idempotency conflict retains the
-original attempt as an exceptional condition requiring investigation. A rejection
-after an earlier uncertain outcome conservatively retains that earlier attempt.
+recovery after session renewal. Unmarked 400/403 responses preserve recovery for
+investigation; marked cart/price/availability conflicts refresh the cart and
+require a new explicit review. An idempotency conflict retains the
+original attempt as an exceptional condition requiring investigation. A retry
+with a marked Go cart rejection after same-key order lookup resolves the
+earlier uncertainty, refreshes the cart, and requires renewed review. Unmarked
+gateway/network responses retain the original attempt. See [the E2E guide](docs/e2e.md#recovery-contract).
 
 Recovery waits for verified `/api/me` issuer + subject and reads only that
 identity's namespaced record. Another signed-in user cannot replay the record
@@ -1332,6 +1365,7 @@ not be verified in this milestone. Existing services/configuration/data were
 preserved; new verification identities remain (one initial probe cart remains;
 the controlled run's cart was emptied). Screen-reader and live session-expiry
 browser testing remain unperformed; session renewal is covered in frontend tests.
-Remaining shopping gaps include live frontend-to-checkout verification against
-an updated backend, order browsing/history, AI suggestions/chat, live inventory,
-and cross-tab/device coordination. Payments and delivery remain outside scope.
+The live frontend-to-checkout gap was closed by the isolated stabilization suite
+on 2026-10-18. Order browsing/history, AI suggestions/chat, live inventory,
+and cross-tab/device coordination are planned or out-of-scope capabilities, not
+verified shopping defects. Payments and delivery remain outside scope.
