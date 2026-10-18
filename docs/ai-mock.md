@@ -1,8 +1,9 @@
 # First AI milestone: deterministic local protocol testing
 
 Implemented: an internal Go shopping assistant → APISIX 3.14.1 `ai-proxy` →
-local Go mock service. No external model calls, browser AI features, public
-assistant endpoint, persistence, or cart/order mutations. Go/React run on the
+local Go mock service, plus an authenticated, rate-limited public assistant
+endpoint (disabled by default). No external model calls, chat UI, conversation
+persistence, or cart/order mutations. Go/React run on the
 host; `backend/cmd/mock-ai` runs in Compose.
 
 ## Catalog-grounded internal operation
@@ -11,7 +12,7 @@ host; `backend/cmd/mock-ai` runs in Compose.
 one request of 1–256 bytes. Construct the client explicitly with
 `shoppingassistant.NewClient(gatewayURL, serviceCredential)`. Safe example names
 are `CARTSIDE_AI_GATEWAY_URL` and `CARTSIDE_AI_SERVICE_KEY` in `.env.example`;
-`cmd/api` does not consume them yet. Never supply these to Vite. The URL must
+`cmd/api` consumes them only when `CARTSIDE_ASSISTANT_ENABLED=true`. Never supply these to Vite. The URL must
 have the exact `/internal/ai/chat/completions` path with no credentials, query,
 or fragment. HTTP is for local development; use HTTPS beyond a trusted host.
 The client has no cookie jar, redirects, identity input, or automatic retries.
@@ -308,3 +309,39 @@ smoke scenarios, structured candidate selection, authentication, request limits,
 and malformed/rate-limit/server-error/timeout faults with one provider invocation
 each. Developer data was preserved and disposable containers/volumes removed.
 Frontend and full browser E2E checks were not rerun for this internal Go change.
+
+
+## Public HTTP milestone
+
+The [README public contract](../README.md#authenticated-assistant-endpoint)
+documents the feature flag, strict JSON/Unicode byte limits, response fields,
+error codes, local admission semantics, restart/multiple-instance limitations,
+and the contract for a future chat panel. Configuration lives only in Go's host
+environment; the default disabled endpoint still requires authentication and
+CSRF and returns `assistant_unavailable` without constructing an AI client.
+The limiter uses verified issuer/subject, never request identity headers or IP.
+No prompt, response, credential, token, or identity logging is added. No health
+probe invokes inference. There are no retries, cart mutations, or order mutations.
+
+`go test -race ./...` covers strict parsing, enabled/disabled configuration,
+verified authentication/CSRF, error mapping, cancellation/failure slot release,
+identity isolation, rate and concurrency exhaustion, cleanup, and capacity.
+`scripts/e2e.py` enables the endpoint in its disposable project. A signed-in
+browser sends a breakfast message through APISIX's public API path, Go, APISIX's
+service-authenticated internal AI path, and the mock, checking the versioned
+result and unchanged cart/order snapshots. Exactly one inference is expected;
+the same browser's direct internal AI request is denied. Existing gateway fault
+checks remain in `scripts/verify-ai.py`. These checks use disposable data and
+never read the developer `.env`.
+
+Verification (2026-10-18): Go 1.24.0 formatting, vet, unit tests, race tests, and
+build passed. Node 24.15.0 frontend lint, application/E2E type checks, 46 unit
+tests, and production build passed. Configuration parsing and isolated live
+APISIX/mock authentication, structured output, and four fault checks passed.
+The isolated full-stack runner passed all six database integration packages
+with race detection and all five Chromium browser tests, including the new
+public assistant request, unchanged cart/order snapshots, and internal-route
+session-only denial. Exactly one provider invocation was observed in that run.
+The runner used the host default Go 1.27.2; standalone Go checks also passed
+with that toolchain. Disposable resources were removed and developer data was
+preserved. Live providers and remote CI were not exercised.

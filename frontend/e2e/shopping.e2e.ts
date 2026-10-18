@@ -60,6 +60,16 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   expect((await page.request.post(config.origin+'/internal/ai/chat/completions', {
     data: { model: 'cartside-mock-v1', messages: [{ role: 'user', content: 'breakfast for two' }] },
   })).status()).toBe(401)
+  const snapshot = () => execFileSync(config.compose[0], [...config.compose.slice(1), 'exec', '-T', 'postgres', 'psql', '-U', 'e2e', '-d', 'e2e', '-qAt'], { input: 'SELECT json_build_array((SELECT json_agg(c) FROM carts c),(SELECT json_agg(i) FROM cart_items i),(SELECT json_agg(o) FROM orders o),(SELECT json_agg(i) FROM order_items i));', stdio: ['pipe', 'pipe', 'pipe'] }).toString()
+  const beforeData = snapshot()
+  const beforeAssistant = await api(page, 'cart')
+  const inference = await api(page, 'assistant/messages', 'POST', { message: 'breakfast for two' })
+  expect(inference.status).toBe(200)
+  expect(inference.body.version).toBe(1)
+  expect(inference.body.provider).toBe('simulated: cartside-mock-v1')
+  expect(inference.body.suggestions.length).toBeGreaterThan(0)
+  expect((await api(page, 'cart')).body).toEqual(beforeAssistant.body)
+  expect(snapshot()).toBe(beforeData)
   await expect(page.getByText('Your cart is empty.', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible()

@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. No assistant HTTP endpoint, chat UI, or cart acceptance flow is exposed; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. Chat UI and cart acceptance remain planned; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
 
 ## Non-AI stabilization gate
 
@@ -1379,3 +1379,72 @@ storefront sessions do not authorize it. There are no paid services, real API
 keys, browser assistant features, catalog IDs, or cart changes. See the
 [AI guide](docs/ai-mock.md) for architecture, scenarios, exact setup/verification
 commands, and pinned-plugin compatibility limits.
+
+
+## Authenticated assistant endpoint
+
+Enable `CARTSIDE_ASSISTANT_ENABLED=true` in the host Go environment and configure
+`CARTSIDE_AI_GATEWAY_URL` plus `CARTSIDE_AI_SERVICE_KEY` as in `.env.example`.
+Default `false` constructs no AI client and requires no AI credentials in Go;
+authenticated, CSRF-valid calls return 503 `assistant_unavailable`. Compose's
+internal AI route still requires its independent service key. Enabled startup
+validates gateway configuration and positive limits without invoking inference.
+Normal catalog/cart/checkout operations and health do not depend on inference.
+
+The future chat panel calls `POST /api/assistant/messages` on the application
+origin with browser credentials, `Content-Type: application/json`,
+`X-CSRF-Protection: 1`, and exactly `{"message":"breakfast for two"}`. Go receives
+`/assistant/messages`. The decoded message must be nonblank and at most **256
+UTF-8 bytes**, not characters; the JSON body is capped at 2048 bytes. For example,
+128 `é` characters fit; 129 do not. Escaped and literal Unicode use the same
+decoded byte count; invalid UTF-8 and unpaired surrogate escapes are rejected.
+Unknown/duplicate fields, missing/null values, trailing JSON, roles, history,
+model, provider URLs, candidates, and owner identity are rejected.
+
+Success is the existing version 1 result: `version`,
+`provider: "simulated: cartside-mock-v1"`, `text`, and `suggestions` (always an
+array). Suggestions contain `product_id`, `quantity`, `reason`, `name`,
+`package_label`, `price_cents`, `currency`, and `available`, refreshed from the
+catalog. All responses use `Cache-Control: no-store`. This endpoint never changes
+carts or orders. Render returned text as text; suggestion acceptance remains a
+future milestone. No UI, persistence, streaming, or automatic retries are added.
+
+The single Go process defaults to 10 admitted requests per minute per verified
+issuer + subject, one in-flight request per user, and 1000 identity entries.
+Configure positive `CARTSIDE_ASSISTANT_REQUESTS_PER_MINUTE` and
+`CARTSIDE_ASSISTANT_MAX_USERS` values. Authentication, CSRF, and input validation
+precede admission; admitted failures still count. Idle entries are lazily evicted on admission after
+their fixed minute window; busy entries remain protected. Capacity exhaustion
+fails closed for new users. Restart resets allowances. Multiple Go instances
+require shared enforcement. This is a Go policy, not an APISIX per-user quota;
+gateway quotas can be added separately. Service authentication remains intact.
+
+Errors use `{"code":"...","message":"safe explanation"}`:
+
+| HTTP | Code | Meaning |
+| --- | --- | --- |
+| 400 | `invalid_input` | Invalid content type, JSON, or message |
+| 401 | `unauthorized` | Verified authentication required |
+| 403 | `csrf_required` | Existing origin/header CSRF checks failed |
+| 413 | `payload_too_large` | JSON body exceeds 2048 bytes |
+| 429 | `assistant_rate_limited`, `assistant_busy`, `assistant_capacity` | Local admission rejected |
+| 429 | `provider_rate_limited` | Provider returned 429 |
+| 503 | `assistant_unavailable` | Feature disabled |
+| 504 | `timeout` | Provider request timed out |
+| 502 | `provider_unavailable`, `invalid_provider_output` | Provider failure or invalid/oversized response |
+| 503 | `catalog_unavailable` | Catalog access failed |
+| 409 | `catalog_changed` | Suggested product disappeared or became unavailable |
+
+429 responses include `Retry-After` seconds. Busy/capacity/provider errors use a
+one-second hint (not a guarantee); the pinned gateway discards upstream retry
+headers. Local rate errors report the remaining fixed window. The panel should
+keep manual shopping usable on failure and offer deliberate retries, respecting
+`Retry-After`. Gateway authentication failures can retain gateway-native bodies;
+handle status even when the application error envelope is absent. Cancellation
+propagates to catalog/provider work and releases the in-flight slot.
+
+Demo messages: `breakfast for two`, `vegetarian dinner`, `snacks for a picnic`.
+Other valid messages return local clarification with `suggestions: []`. The mock
+is deterministic and does not verify dietary/allergen suitability, natural
+language quality, billing, or live-provider compatibility. See [AI details and
+verification](docs/ai-mock.md).

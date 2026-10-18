@@ -49,9 +49,13 @@ func run() error {
 
 	products := catalog.NewRepository(pool)
 	carts := cart.NewService(pool, products)
+	assistant, limiter, err := httpapi.ConfigureAssistant(os.Getenv, products)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouterWithCheckout(pool.Ping, verifier.Middleware, products, csrf, carts, orders.NewService(pool, carts, products)),
+		Handler:           httpapi.NewRouterWithAssistant(pool.Ping, verifier.Middleware, products, csrf, carts, orders.NewService(pool, carts, products), assistant, limiter),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

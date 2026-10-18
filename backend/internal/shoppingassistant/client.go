@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/WilliamSchweitzer/cartside/backend/internal/aiprotocol"
 )
@@ -135,4 +136,6 @@ func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (aiprotoc
 	}
 	return out, nil
 }
-func bounded(s string, n int) bool { return strings.TrimSpace(s) != "" && len(s) <= n }
+func bounded(s string, n int) bool {
+	return utf8.ValidString(s) && strings.TrimSpace(s) != "" && len(s) <= n
+}

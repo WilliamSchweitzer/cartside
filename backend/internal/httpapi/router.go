@@ -12,21 +12,30 @@ import (
 
 // NewRouter constructs the application's HTTP routes.
 func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts ...Cart) http.Handler {
-	return newRouter(checkReady, authenticate, catalog, csrf, nil, carts...)
+	return newRouter(checkReady, authenticate, catalog, csrf, nil, nil, nil, carts...)
 }
 
 // NewRouterWithCheckout wires checkout alongside the existing routes.
 func NewRouterWithCheckout(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts Cart, checkout Checkout) http.Handler {
-	return newRouter(checkReady, authenticate, catalog, csrf, checkout, carts)
+	return newRouter(checkReady, authenticate, catalog, csrf, checkout, nil, nil, carts)
 }
 
-func newRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, checkout Checkout, carts ...Cart) http.Handler {
+func NewRouterWithAssistant(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts Cart, checkout Checkout, assistant Assistant, limiter *AssistantLimiter) http.Handler {
+	return newRouter(checkReady, authenticate, catalog, csrf, checkout, assistant, limiter, carts)
+}
+
+func newRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, checkout Checkout, assistant Assistant, limiter *AssistantLimiter, carts ...Cart) http.Handler {
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		protected := authenticate(csrf.Middleware(next))
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodGet && (r.URL.Path == "/health/live" || r.URL.Path == "/health/ready") {
 				next.ServeHTTP(w, r)
+				return
+			}
+			if r.URL.Path == "/assistant/messages" {
+				w.Header().Set("Cache-Control", "no-store")
+				protected.ServeHTTP(&assistantBoundary{ResponseWriter: w}, r)
 				return
 			}
 			if r.URL.Path == "/checkout" {
@@ -55,6 +64,7 @@ func newRouter(checkReady func(context.Context) error, authenticate func(http.Ha
 	if checkout != nil {
 		r.Post("/checkout", checkoutHandler(checkout))
 	}
+	r.Post("/assistant/messages", assistantHandler(assistant, limiter))
 	r.Get("/products", listProducts(catalog))
 	r.Get("/products/{id}", getProduct(catalog))
 	r.Get("/me", func(w http.ResponseWriter, r *http.Request) {

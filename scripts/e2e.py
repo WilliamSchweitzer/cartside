@@ -70,7 +70,7 @@ def main():
         for private_file in folder.iterdir():
             private_file.chmod(0o600)
         command = ['docker', 'compose', '--env-file', '/dev/null', '-p', project, '-f', str(config)]
-        env.update(DATABASE_URL=f"postgres://e2e:{env['POSTGRES_PASSWORD']}@127.0.0.1:{pg}/e2e?sslmode=disable", HTTP_ADDR=f'0.0.0.0:{api}', BROWSER_ORIGIN=origin, OIDC_ISSUER=issuer, OIDC_AUDIENCE='cartside-api', OIDC_JWKS_URL=issuer+'/protocol/openid-connect/certs')
+        env.update(CARTSIDE_ASSISTANT_ENABLED='true', CARTSIDE_ASSISTANT_REQUESTS_PER_MINUTE='10', CARTSIDE_ASSISTANT_MAX_USERS='1000', CARTSIDE_AI_GATEWAY_URL=origin+'/internal/ai/chat/completions', DATABASE_URL=f"postgres://e2e:{env['POSTGRES_PASSWORD']}@127.0.0.1:{pg}/e2e?sslmode=disable", HTTP_ADDR=f'0.0.0.0:{api}', BROWSER_ORIGIN=origin, OIDC_ISSUER=issuer, OIDC_AUDIENCE='cartside-api', OIDC_JWKS_URL=issuer+'/protocol/openid-connect/certs')
         def run(args, cwd=ROOT):
             result = subprocess.run(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if result.returncode:
@@ -120,9 +120,9 @@ def main():
             if browser.returncode:
                 raise RuntimeError('Browser suite failed (sensitive diagnostics suppressed)')
             stats = subprocess.check_output(command + ['exec', '-T', 'mock-ai', '/mock-ai', '-probe', 'http://127.0.0.1:8090/test/stats'], env=env, stderr=subprocess.DEVNULL)
-            if json.loads(stats)['calls'] != 0:
-                raise RuntimeError('Browser session invoked the mock provider')
-            print('Browser suite passed; valid session alone rejected without provider invocation', flush=True)
+            if json.loads(stats)['calls'] != 1:
+                raise RuntimeError('Unexpected provider invocation count')
+            print('Browser suite passed; public assistant traversed both APISIX paths, internal session-only request denied', flush=True)
         finally:
             for child in children:
                 if child.poll() is None:
