@@ -18,6 +18,7 @@ nginx_config:
   # Docker environment alone is insufficient: preserve these in Nginx workers.
   envs:
     - CARTSIDE_OIDC_CLIENT_SECRET
+    - CARTSIDE_AI_SERVICE_KEY
     - CARTSIDE_SESSION_SECRET
   # OIDC errors and default access logs can include codes/provider responses.
   error_log_level: crit
@@ -25,6 +26,9 @@ nginx_config:
     enable_access_log: false
 
 plugins:
+  # ai-proxy 3.14.1 invokes Prometheus LLM counters even without route metrics.
+  - prometheus
+  - ai-proxy
   - proxy-rewrite
   - openid-connect
   - serverless-pre-function

@@ -2,6 +2,39 @@
 # Keep the OIDC session settings identical on all protected routes.
 # Avoid YAML aliases: APISIX normalizes route/upstream tables in place.
 routes:
+# Reserve the complete internal namespace: no fallthrough to OIDC/Vite.
+- id: internal-deny
+  uris: [/internal, /internal/*]
+  priority: 40
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return function() return ngx.exit(404) end
+- id: internal-ai
+  uri: /internal/ai/chat/completions
+  priority: 50
+  plugins:
+    serverless-pre-function:
+      phase: rewrite
+      functions:
+      - return dofile("/usr/local/apisix/ai-guard.lua")
+    ai-proxy:
+      provider: openai-compatible
+      auth:
+        header:
+          Authorization: Bearer cartside-local-fake-provider-only
+      options:
+        model: cartside-mock-v1
+        stream: false
+      override:
+        endpoint: http://mock-ai:8090/v1/chat/completions
+      timeout: 1000
+      keepalive: false
+      logging:
+        summaries: false
+        payloads: false
+# ai-proxy (single provider) bypasses Nginx upstream; no retry callback/fallback.
 # Gateway-owned public page must not load protected assets or automatically log in.
 - id: signed-out
   uri: /signed-out

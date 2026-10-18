@@ -105,5 +105,6 @@ jobs:
           KEYCLOAK_ADMIN_USERNAME: ci_admin
           KEYCLOAK_ADMIN_PASSWORD: ci_disposable_admin_password
           CARTSIDE_OIDC_CLIENT_SECRET: ci_disposable_client_secret
+          CARTSIDE_AI_SERVICE_KEY: ci_disposable_ai_service_key_32_bytes
           CARTSIDE_SESSION_SECRET: ci_disposable_session_secret_32_bytes
         run: docker compose config --quiet

@@ -55,6 +55,11 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   await page.goto(config.origin+'/api/cart')
   expect((await page.request.get(config.origin+'/api/cart')).status()).toBe(401)
   await login(page)
+  // The same cookie jar has a verified storefront session, but no AI service key.
+  expect((await page.request.get(config.origin+'/auth/session')).status()).toBe(200)
+  expect((await page.request.post(config.origin+'/internal/ai/chat/completions', {
+    data: { model: 'cartside-mock-v1', messages: [{ role: 'user', content: 'breakfast for two' }] },
+  })).status()).toBe(401)
   await expect(page.getByText('Your cart is empty.', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(page.getByText('Page 2', { exact: true })).toBeVisible()

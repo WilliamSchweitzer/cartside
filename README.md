@@ -8,14 +8,14 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented; order browsing, other business modules, and AI integration remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The first AI milestone provides an internal service-authenticated APISIX → deterministic mock provider path; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
 
 ## Non-AI stabilization gate
 
 The non-AI shopping foundation passed the stabilization gate on **2026-10-18**.
 The explicit [end-to-end guide](docs/e2e.md) describes the disposable environment,
 coverage, limitations, and recovery contract. The full-stack suite remains outside
-ordinary CI. AI integration has not been started.
+ordinary CI. The first deterministic mock AI protocol milestone is now implemented; see [local AI verification](docs/ai-mock.md).
 
 This review fixed indefinite locking after a marked same-key rejection, prevented
 unmarked gateway 403 responses from discarding recovery, rejected ambiguous stored
@@ -131,9 +131,9 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 ## Local development
 
-React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, and Keycloak. React runs on the host with Vite.
+React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, Keycloak, and a deterministic local mock AI provider. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed, and all other paths to the host-run Vite server. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts. See the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed and storefront paths to the host-run Vite server. `/internal/*` is reserved; only the service-authenticated AI route is enabled there. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts. See the gateway authentication section below.
 
 ### Configuration
 
@@ -155,7 +155,7 @@ from pathlib import Path
 import secrets
 p = Path('.env')
 lines = p.read_text().splitlines()
-for key in ('POSTGRES_PASSWORD', 'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET'):
+for key in ('POSTGRES_PASSWORD', 'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET', 'CARTSIDE_AI_SERVICE_KEY'):
     matches = [i for i, line in enumerate(lines) if line.startswith(key + '=')]
     if not matches:
         lines.append(key + '=' + secrets.token_hex(32))
@@ -1369,3 +1369,13 @@ The live frontend-to-checkout gap was closed by the isolated stabilization suite
 on 2026-10-18. Order browsing/history, AI suggestions/chat, live inventory,
 and cross-tab/device coordination are planned or out-of-scope capabilities, not
 verified shopping defects. Payments and delivery remain outside scope.
+
+## AI milestone 1: local mock protocol path
+
+The first AI milestone uses the pinned APISIX `ai-proxy` plugin with an
+OpenAI-compatible Chat Completions contract and a deterministic Go provider in
+Compose. `/internal/ai/chat/completions` requires `CARTSIDE_AI_SERVICE_KEY`;
+storefront sessions do not authorize it. There are no paid services, real API
+keys, browser assistant features, catalog IDs, or cart changes. See the
+[AI guide](docs/ai-mock.md) for architecture, scenarios, exact setup/verification
+commands, and pinned-plugin compatibility limits.

@@ -1,0 +1,11 @@
+# Keep local credentials and unrelated application files out of the build context.
+**
+!backend/
+!backend/go.mod
+!backend/go.sum
+!backend/cmd/
+!backend/cmd/mock-ai/
+!backend/cmd/mock-ai/**
+!backend/internal/
+!backend/internal/mockai/
+!backend/internal/mockai/**

@@ -40,7 +40,7 @@ def main():
         origin = f'http://localhost:{gateway}'
         issuer = f'http://localhost:{kc}/realms/cartside'
         env = {k: v for k, v in os.environ.items() if k not in ('DATABASE_URL', 'COMPOSE_FILE', 'COMPOSE_PROJECT_NAME', 'COMPOSE_PROFILES', 'CARTSIDE_TEST_DATABASE_URL')}
-        for name in ('POSTGRES_PASSWORD', 'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET'):
+        for name in ('POSTGRES_PASSWORD', 'KEYCLOAK_DB_PASSWORD', 'KEYCLOAK_ADMIN_PASSWORD', 'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET', 'CARTSIDE_AI_SERVICE_KEY'):
             env[name] = secrets.token_hex(32)
         env.update(POSTGRES_USER='e2e', POSTGRES_DB='e2e', KEYCLOAK_ADMIN_USERNAME='e2e-admin')
         realm = json.loads((ROOT / 'infra/keycloak/cartside-realm.json').read_text())
@@ -57,6 +57,8 @@ def main():
             service['logging'] = {'driver': 'none'}
             service['volumes'] = [str(ROOT / volume[2:]) if volume.startswith('./') else volume for volume in service.get('volumes', [])]
         services = compose['services']
+        services['mock-ai']['build']['context'] = str(ROOT)
+        services['mock-ai']['environment'] = {'MOCK_TEST_MODE': '1'}
         services['postgres']['ports'] = [f'127.0.0.1:{pg}:5432']
         services['keycloak']['ports'] = [f'127.0.0.1:{kc}:8080']
         services['keycloak']['environment']['KC_HOSTNAME'] = f'http://localhost:{kc}'
@@ -117,7 +119,10 @@ def main():
                     print(line, flush=True)
             if browser.returncode:
                 raise RuntimeError('Browser suite failed (sensitive diagnostics suppressed)')
-            print('Browser suite passed', flush=True)
+            stats = subprocess.check_output(command + ['exec', '-T', 'mock-ai', '/mock-ai', '-probe', 'http://127.0.0.1:8090/test/stats'], env=env, stderr=subprocess.DEVNULL)
+            if json.loads(stats)['calls'] != 0:
+                raise RuntimeError('Browser session invoked the mock provider')
+            print('Browser suite passed; valid session alone rejected without provider invocation', flush=True)
         finally:
             for child in children:
                 if child.poll() is None:

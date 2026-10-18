@@ -6,11 +6,16 @@ services:
     environment:
       CARTSIDE_OIDC_CLIENT_SECRET: ${CARTSIDE_OIDC_CLIENT_SECRET:?Set CARTSIDE_OIDC_CLIENT_SECRET in .env}
       CARTSIDE_SESSION_SECRET: ${CARTSIDE_SESSION_SECRET:?Set CARTSIDE_SESSION_SECRET in .env}
+      CARTSIDE_AI_SERVICE_KEY: ${CARTSIDE_AI_SERVICE_KEY:?Set CARTSIDE_AI_SERVICE_KEY in .env}
+    depends_on:
+      mock-ai:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./infra/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
       - ./infra/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+      - ./infra/apisix/ai-guard.lua:/usr/local/apisix/ai-guard.lua:ro
       - ./infra/apisix/healthcheck.lua:/usr/local/apisix/healthcheck.lua:ro
     healthcheck:
       test: ["CMD", "resty", "-I", "/usr/local/apisix/deps/share/lua/5.1", "/usr/local/apisix/healthcheck.lua"]
@@ -18,6 +23,20 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  mock-ai:
+    build:
+      context: .
+      dockerfile: infra/mock-ai.Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "/mock-ai", "-probe", "http://127.0.0.1:8090/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   keycloak-db:
     image: postgres:17.10-bookworm
