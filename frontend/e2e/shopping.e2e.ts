@@ -74,7 +74,7 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   expect(snapshot()).toBe(beforeData)
   const selectedName = await suggestions.first().getByRole('heading').innerText()
   const suggestedQuantity = Number((await suggestions.first().innerText()).match(/Quantity: (\d+)/)![1])
-  await suggestions.first().getByRole('button', { name: /^Accept / }).click()
+  await suggestions.first().getByRole('button', { name: /^Accept / }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
   await expect(suggestions.first().getByText('Accepted. Added to your cart.', { exact: true })).toBeVisible()
   await expect(suggestions.first().getByRole('button', { name: /^Accept / })).toBeDisabled()
   const acceptedCart = (await api(page, 'cart')).body
@@ -114,11 +114,24 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   await add(page)
   await page.setViewportSize({ width: 375, height: 812 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  // Mix an assistant increment with an existing manually edited cart.
+  await assistant.getByRole('button', { name: 'breakfast for two', exact: true }).click()
+  await assistant.getByRole('button', { name: 'Send message' }).click()
+  await expect(suggestions.first().getByRole('button', { name: /^Accept / })).toBeEnabled()
+  const manualCart = (await api(page, 'cart')).body
+  await suggestions.first().getByRole('button', { name: /^Accept / }).click()
+  await expect(suggestions.first().getByText('Accepted. Added to your cart.', { exact: true })).toBeVisible()
   const reviewed = (await api(page, 'cart')).body
+  const existingQuantity = manualCart.items.find((i: { product: { name: string } }) => i.product.name === selectedName)?.quantity ?? 0
+  expect(reviewed.items.find((i: { product: { name: string } }) => i.product.name === selectedName).quantity).toBe(existingQuantity + suggestedQuantity)
+  let confirmed: unknown
+  page.on('response', async response => {
+    if (response.url() === config.origin + '/api/checkout' && response.status() === 200) confirmed = await response.json()
+  })
   await review(page)
   const section = page.getByRole('region', { name: 'Simulated checkout', exact: true })
-  await expect(section.getByText(new RegExp(`Quantity: ${reviewed.items[0].quantity}`))).toBeVisible()
-  expect((await api(page, 'cart')).body.items.length).toBe(1)
+  await expect(section.getByText(new RegExp(`Quantity: ${reviewed.items[0].quantity}`)).first()).toBeVisible()
+  expect((await api(page, 'cart')).body).toEqual(reviewed)
   await expect(page.getByRole('heading', { name: 'Simulated checkout', exact: true })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(page.getByRole('button', { name: 'Back to cart' })).toBeFocused()
@@ -126,6 +139,8 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   await expect(page.getByRole('button', { name: 'Place simulated order' })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { name: 'Simulated order confirmed' })).toBeVisible()
+  await expect.poll(() => confirmed).toBeTruthy()
+  expect(confirmed).toMatchObject({ total_cents: reviewed.subtotal_cents, items: reviewed.items.map((i: { product: { id: string; name: string; package_label: string; price_cents: number }; quantity: number; line_total_cents: number }) => ({ product_id: i.product.id, name: i.product.name, package_label: i.product.package_label, quantity: i.quantity, unit_price_cents: i.product.price_cents, line_total_cents: i.line_total_cents })) })
   expect((await api(page, 'cart')).body.items.length).toBe(0)
   await page.getByRole('link', { name: 'Sign out', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'You are signed out' })).toBeVisible()

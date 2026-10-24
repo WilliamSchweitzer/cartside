@@ -29,6 +29,7 @@ function setup(initial = 0) {
     if (url === '/api/assistant/messages') { messages.push(init); return assistant(init) }
     if (url === '/api/checkout') return checkout()
     if (init.method === 'POST') { additions.push(init); return mutation(init) }
+    if (init.method === 'PUT') { quantity = JSON.parse(init.body as string).quantity; return new Response(null, { status: 204 }) }
     return read()
   })
   vi.stubGlobal('fetch', fetcher)
@@ -202,6 +203,26 @@ describe('demo assistant panel and shared cart', () => {
     s.assistant(async () => json({ ...result, suggestions: [{ ...suggestion, quantity: 999 }] })); await send()
     expect(screen.queryByRole('button', { name: 'Accept Apples' })).toBeNull()
     expect(s.additions).toHaveLength(0)
+  })
+  it.each(['assistant_unavailable', 'provider_unavailable', 'invalid_provider_output'])('allows manual edits and explicit checkout after %s', async code => {
+    const s = setup(1)
+    s.assistant(async () => json({ code }, code === 'assistant_unavailable' ? 503 : 502))
+    s.checkout(async () => {
+      s.read(async () => json(cart()))
+      return json({ id: product.id, confirmation: 'SIM-manual', kind: 'simulated', created_at: '2026-10-23T12:00:00Z', currency: 'USD', total_cents: 250,
+        items: [{ product_id: product.id, name: product.name, package_label: product.package_label, quantity: 2, unit_price_cents: 125, line_total_cents: 250 }] })
+    })
+    render(<Harness />); await loaded(); await send()
+    s.read(async () => json(cart(2)))
+    fireEvent.change(screen.getByLabelText('Quantity for Apples'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Update quantity for Apples' }))
+    await screen.findByText('Subtotal: $2.50')
+    fireEvent.click(screen.getByText('Review simulated order')); await screen.findByText('Place simulated order')
+    expect(s.fetcher.mock.calls.filter(([url]) => url === '/api/checkout')).toHaveLength(0)
+    fireEvent.click(screen.getByText('Place simulated order'))
+    await screen.findByText('SIM-manual')
+    await screen.findByText(/Your cart is empty/)
+    expect(screen.queryByRole('button', { name: 'Accept Apples' })).toBeNull()
   })
   it('invalidates an existing checkout review when an accepted suggestion changes the cart', async () => {
     const s = setup(1); render(<Harness />); await loaded(); await send()

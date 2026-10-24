@@ -394,3 +394,22 @@ unchanged, and the session-only internal request remained denied. Exactly one
 mock inference was observed. Disposable resources were removed; developer
 configuration and persistent data were preserved. Screen-reader testing, other
 browser engines, live providers, and remote CI were not exercised.
+
+## Complete MVP gate (2026-10-23)
+
+The complete deterministic local demo passed the [current verification record](e2e.md#complete-mock-assisted-mvp-verification-2026-10-23):
+Go vet/unit/race/build, 86 frontend tests plus lint/type-check/build, six explicit
+race-enabled database integration suites, gateway/config checks including all
+four provider faults, and all five Chromium browser tests. The browser suite now
+expects two mock invocations, verifies repeated acceptance cannot double-add,
+and checks a mixed manual/assistant order against the reviewed snapshots.
+Focused UI tests additionally complete manual checkout after disabled,
+unavailable, or invalid assistant responses. Existing fault tests retain
+cooldown/recovery, uncertain and confirmed additions across failed refreshes,
+checkout locks, malformed output, and account-change/late-response protection.
+
+No runtime defect was reproduced; changes close verification and documentation
+gaps. Historical invocation counts and test counts above describe earlier runs.
+No live model was called, and this result makes no claim about real-provider
+compatibility or production readiness. See the linked record for exact commands,
+resolved tooling failures, intentional limitations, and unexecuted checks.

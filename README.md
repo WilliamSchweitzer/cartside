@@ -10,6 +10,23 @@ This is a personal learning project focused on Go application design, API gatewa
 
 Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. The embedded demo assistant and individual suggestion acceptance are implemented; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
 
+## Mock-assisted MVP verification
+
+The original local mock-assisted MVP exit criteria passed on **2026-10-23**:
+all five isolated Chromium tests, six PostgreSQL integration suites with race
+detection, Go formatting/vet/unit/race/build, frontend lint/type-check/86 tests/build,
+and isolated gateway/configuration checks. The browser flow verifies suggestions
+alone leave data unchanged, exact-quantity acceptance without double-addition,
+Decline, mixed manual shopping, explicit checkout, order snapshots, cart clearing,
+and logout. Focused tests cover assistant failures and checkout coordination.
+No reproducible application defect remains in the exercised flow.
+
+This completes the deterministic three-scenario local demo. Broader language
+understanding requires a real model and separate verification; no live-provider
+compatibility or production readiness is claimed. See [exact evidence and
+limitations](docs/e2e.md#complete-mock-assisted-mvp-verification-2026-10-23).
+The records below describe earlier milestones.
+
 ## Non-AI stabilization gate
 
 The non-AI shopping foundation passed the stabilization gate on **2026-10-18**.
@@ -1533,8 +1550,9 @@ suggestion, declines another, and checks the shared cart. It also retains the
 session-only internal-route denial, cart/order snapshots before acceptance,
 manual shopping, identity isolation, and checkout recovery regression scenarios.
 
-Remaining MVP work includes order browsing, broader catalog-grounded assistance
-beyond three fixtures, and final usability/accessibility review. Streaming,
+Order browsing and broader assistance beyond the three deterministic scenarios
+are future capabilities, outside the original mock-assisted MVP exit criteria.
+Broader usability/accessibility review remains unverified. Streaming,
 persistent conversations, real providers, and AI-driven checkout are outside
 this milestone. The current assistant is a deterministic demo, not a live-model
 integration or a dietary recommendation system.

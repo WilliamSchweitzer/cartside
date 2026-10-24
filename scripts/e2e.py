@@ -120,7 +120,7 @@ def main():
             if browser.returncode:
                 raise RuntimeError('Browser suite failed (sensitive diagnostics suppressed)')
             stats = subprocess.check_output(command + ['exec', '-T', 'mock-ai', '/mock-ai', '-probe', 'http://127.0.0.1:8090/test/stats'], env=env, stderr=subprocess.DEVNULL)
-            if json.loads(stats)['calls'] != 1:
+            if json.loads(stats)['calls'] != 2:
                 raise RuntimeError('Unexpected provider invocation count')
             print('Browser suite passed; public assistant traversed both APISIX paths, internal session-only request denied', flush=True)
         finally:
