@@ -1,0 +1,368 @@
+# File-driven standalone routes. Keep the final #END marker.
+# Keep the OIDC session settings identical on all protected routes.
+# Avoid YAML aliases: APISIX normalizes route/upstream tables in place.
+global_rules:
+- id: metrics
+  plugins:
+    prometheus:
+      prefer_name: false
+routes:
+# Reserve the complete internal namespace: no fallthrough to OIDC/Vite.
+- id: internal-deny
+  uris: [/internal, /internal/*]
+  priority: 40
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); return ngx.exit(404) end
+- id: internal-ai
+  uri: /internal/ai/chat/completions
+  priority: 50
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return dofile("/usr/local/apisix/ai-guard.lua")
+    serverless-post-function:
+      _meta:
+        priority: 13000
+      phase: before_proxy
+      functions:
+      - return function(conf, ctx) local core = require("apisix.core"); local instance = core.table.deepcopy(ctx.picked_ai_instance);
+        instance.auth.header["X-Request-ID"] = core.request.header(ctx, "X-Request-ID"); ctx.picked_ai_instance = instance end
+    ai-proxy:
+      provider: openai-compatible
+      auth:
+        header:
+          Authorization: Bearer cartside-local-fake-provider-only
+      options:
+        model: cartside-mock-v1
+        stream: false
+      override:
+        endpoint: http://mock-ai:8090/v1/chat/completions
+      timeout: 1000
+      keepalive: false
+      logging:
+        summaries: false
+        payloads: false
+# ai-proxy (single provider) bypasses Nginx upstream; no retry callback/fallback.
+# Gateway-owned public page must not load protected assets or automatically log in.
+- id: signed-out
+  uri: /signed-out
+  priority: 30
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); ngx.header["Content-Type"] = "text/html; charset=utf-8"; ngx.header["Cache-Control"] = "no-store";
+        ngx.say([[<!doctype html><html lang="en"><meta charset="utf-8"><title>Cartside signed out</title><main><h1>You are
+        signed out</h1><a href="/">Sign in to Cartside</a></main></html>]]); return ngx.exit(200) end
+# Only these exact API paths bypass authentication.
+- id: health
+  uris:
+  - /api/health/live
+  - /api/health/ready
+  priority: 30
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID") end
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/(.*)
+      - /$1
+      headers:
+        remove:
+        - Authorization
+        - Cookie
+        - X-Access-Token
+        - X-ID-Token
+        - X-Userinfo
+        - X-Refresh-Token
+        - X-User-ID
+        - X-Forwarded-User
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      api:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+# The callback and logout are consumed by openid-connect before proxying.
+- id: frontend
+  uri: /*
+  priority: -10
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: https://cartside.wschweitzer.com/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: https://cartside.wschweitzer.com/signed-out
+      bearer_only: false
+      unauth_action: auth
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: true
+        absolute_timeout: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    proxy-rewrite:
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      frontend:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 60
+      read: 60
+# OIDC runs before the post-function; this response never reaches an upstream.
+- id: gateway-session
+  uri: /auth/session
+  priority: 30
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: https://cartside.wschweitzer.com/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: https://cartside.wschweitzer.com/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: false
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: true
+        absolute_timeout: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    serverless-post-function:
+      phase: rewrite
+      functions:
+      - return function() ngx.header["Content-Type"] = "application/json"; ngx.header["Cache-Control"] = "no-store"; ngx.say([[{"authenticated":true}]]);
+        return ngx.exit(200) end
+# Rewrite priorities: pre-function override 13000 > request-id 12015 >
+# OIDC 2599 > proxy-rewrite 1008. Browser IDs are cleared before generation.
+# Internal AI authenticates and validates IDs at 13000; before_proxy clones its
+# provider configuration per request because ai-proxy forwards configured headers.
+# Sanitization precedes OIDC; proxy-rewrite removes only Cookie, preserving the
+# session-generated X-Access-Token. No token is forwarded to Vite or responses.
+# Preserve browser Origin, X-CSRF-Protection, Sec-Fetch-Site, and Idempotency-Key unchanged.
+# Never set/add these headers: Go must validate what the browser actually sent.
+# Browser cookies are accepted, but signed-out fetches get 401 rather than redirects.
+- id: backend
+  priority: 10
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: https://cartside.wschweitzer.com/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: https://cartside.wschweitzer.com/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: true
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: true
+        absolute_timeout: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/?(.*)
+      - /$1
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      api:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+  uri: /api/*
+- id: backend-root
+  priority: 10
+  plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+        "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
+    openid-connect:
+      client_id: cartside-apisix
+      client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
+      discovery: http://keycloak:8080/realms/cartside/.well-known/openid-configuration
+      redirect_uri: https://cartside.wschweitzer.com/auth/callback
+      logout_path: /auth/logout
+      post_logout_redirect_uri: https://cartside.wschweitzer.com/signed-out
+      bearer_only: false
+      unauth_action: deny
+      scope: openid
+      use_pkce: true
+      use_nonce: true
+      accept_none_alg: false
+      accept_unsupported_alg: false
+      ssl_verify: true
+      set_access_token_header: true
+      set_id_token_header: false
+      set_userinfo_header: false
+      set_refresh_token_header: false
+      session:
+        secret: $ENV://CARTSIDE_SESSION_SECRET
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: true
+        absolute_timeout: 3600
+      session_contents:
+        id_token: true
+        access_token: true
+        user: false
+        enc_id_token: true
+    proxy-rewrite:
+      regex_uri:
+      - ^/api/?(.*)
+      - /$1
+      headers:
+        remove:
+        - Cookie
+  upstream:
+    type: roundrobin
+    scheme: http
+    nodes:
+      api:8080: 1
+    retries: 0
+    timeout:
+      connect: 1
+      send: 5
+      read: 5
+  uri: /api
+#END

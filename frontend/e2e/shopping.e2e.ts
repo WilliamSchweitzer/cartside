@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 const config = JSON.parse(readFileSync(process.env.CARTSIDE_E2E_CONFIG!, 'utf8')) as {
-  origin: string; users: { username: string; password: string }[]; compose: string[]
+  origin: string; deployment?: boolean; users: { username: string; password: string }[]; compose: string[]
 }
 async function login(page: Page, user = 0) {
   try {
@@ -63,12 +63,19 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   await page.goto(config.origin+'/api/cart')
   expect((await page.request.get(config.origin+'/api/cart')).status()).toBe(401)
   await login(page)
-  await expect.poll(() => hmrConnected).toBe(true)
+  if (!config.deployment) await expect.poll(() => hmrConnected).toBe(true)
+  else {
+    expect((await page.context().cookies()).some(cookie => cookie.secure && cookie.httpOnly)).toBe(true)
+    expect((await page.request.post(config.origin+'/api/cart/items', { data: {} })).status()).toBe(403)
+    for (const path of ['/internal/ai/chat/completions', '/metrics', '/admin/']) {
+      expect((await page.request.get(config.origin+path)).status()).toBe(404)
+    }
+  }
   // The same cookie jar has a verified storefront session, but no AI service key.
   expect((await page.request.get(config.origin+'/auth/session')).status()).toBe(200)
   expect((await page.request.post(config.origin+'/internal/ai/chat/completions', {
     data: { model: 'cartside-mock-v1', messages: [{ role: 'user', content: 'breakfast for two' }] },
-  })).status()).toBe(401)
+  })).status()).toBe(config.deployment ? 404 : 401)
   const snapshot = () => execFileSync(config.compose[0], [...config.compose.slice(1), 'exec', '-T', 'postgres', 'psql', '-U', 'e2e', '-d', 'e2e', '-qAt'], { input: 'SELECT json_build_array((SELECT json_agg(c) FROM carts c),(SELECT json_agg(i) FROM cart_items i),(SELECT json_agg(o) FROM orders o),(SELECT json_agg(i) FROM order_items i));', stdio: ['pipe', 'pipe', 'pipe'] }).toString()
   const beforeData = snapshot()
   const beforeAssistant = await api(page, 'cart')
@@ -113,7 +120,7 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   expect(changed.body.subtotal_cents === 3 * item.product.price_cents).toBe(true)
   await page.reload()
   await expect(page.getByText('3 total units · 1 distinct items')).toBeVisible()
-  const other = await browser.newContext()
+  const other = await browser.newContext({ ignoreHTTPSErrors: !!config.deployment })
   try {
     const bob = await other.newPage(); await login(bob, 1)
     expect((await api(bob, 'cart')).body.items.length).toBe(0)
@@ -228,3 +235,19 @@ for (const failure of ['price', 'unavailable', 'stale'] as const) {
     }
   })
 }
+
+
+test('deployment identity routes and canonical issuer', async ({ page }) => {
+  test.skip(!config.deployment, 'Production-style HTTPS runner only')
+  const identity = config.origin.replace('://cartside.', '://auth.cartside.')
+  for (const path of ['/admin/', '/realms/master/', '/health/ready', '/metrics']) {
+    expect((await page.request.get(identity+path)).status()).toBe(404)
+  }
+  const discovery = await page.request.get(identity+'/realms/cartside/.well-known/openid-configuration')
+  expect(discovery.status()).toBe(200)
+  const metadata = await discovery.json()
+  expect(metadata.issuer).toBe(identity+'/realms/cartside')
+  expect(metadata.authorization_endpoint.startsWith(identity+'/')).toBe(true)
+  await page.goto(config.origin)
+  expect(page.url().startsWith(identity+'/')).toBe(true)
+})

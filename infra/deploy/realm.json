@@ -1,0 +1,58 @@
+{
+  "realm": "cartside",
+  "enabled": true,
+  "displayName": "Cartside",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": false,
+  "resetPasswordAllowed": false,
+  "sslRequired": "external",
+  "clients": [
+    {
+      "clientId": "cartside-apisix",
+      "name": "Cartside gateway",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${CARTSIDE_OIDC_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "https://cartside.wschweitzer.com/auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "post.logout.redirect.uris": "https://cartside.wschweitzer.com/signed-out"
+      },
+      "protocolMappers": [
+        {
+          "name": "cartside-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "cartside-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "cartside-api",
+      "name": "Cartside backend API",
+      "protocol": "openid-connect",
+      "enabled": true,
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "bruteForceProtected": true
+}

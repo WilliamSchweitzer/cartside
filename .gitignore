@@ -45,3 +45,6 @@ __pycache__/
 
 # Private local monitoring credentials
 .local/
+
+# Private deployment configuration and TLS material
+.deploy/

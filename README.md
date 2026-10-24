@@ -225,7 +225,7 @@ npm test
 npm run build
 ```
 
-The build writes static files to `frontend/dist/`. Serving that bundle in production is outside this milestone; the current gateway upstream requires the Vite development server.
+The build writes static files to `frontend/dist/`. The separate [deployment package](docs/deployment.md) serves this bundle with nginx; the development gateway continues to use Vite.
 
 In another terminal, from the repository root:
 
@@ -1593,3 +1593,13 @@ not be summed. Health probes are separate; synthetic mock tokens/costs are omitt
 Use dashboard latency/outcomes to locate a time window, then the browser response's
 `X-Request-ID` to join API, gateway and mock completion logs. The guide documents
 metrics, buckets, no-data behavior, credentials and exact verification limitations.
+
+## Single-VM demo packaging
+
+A separate ARM64 Compose package, API/static frontend Dockerfiles, private services,
+HTTPS edge configuration and disposable HTTPS verification runner are available.
+See [the deployment guide](docs/deployment.md) for fresh-database setup, identity
+provisioning, secrets, verification evidence and launch blockers. Packaging does
+not provision Oracle resources, change DNS, request public certificates or publish
+the demo. Docker storage has since been recovered, but deployment image builds
+and HTTPS runtime verification still need to be rerun before public launch.
