@@ -1,10 +1,148 @@
 # Request correlation and structured logs
 
-Cartside uses `X-Request-ID` to correlate requests. This is **request correlation,
-not distributed tracing**: there are no spans, trace propagation, sampling,
-metrics, or dashboards in this milestone. IDs must never become metric labels.
-The existing APISIX Prometheus plugin remains loaded only because the pinned AI
-plugin requires it internally; this change adds no metrics infrastructure.
+Cartside combines bounded local Prometheus metrics, a provisioned Grafana overview,
+and `X-Request-ID` correlation in safe JSON logs. There are no tracing spans,
+log aggregation, external monitoring services, or alert notifications. Request IDs
+never become metric labels.
+
+## Local metrics and dashboard
+
+Normal shopping and `docker compose up -d --wait` need no monitoring configuration
+or Grafana password. The optional `observability` profile runs Prometheus **3.13.1**
+(LTS branch) and Grafana **13.2.3**. APISIX remains pinned to **3.14.1**.
+See the [Prometheus support policy](https://prometheus.io/docs/introduction/release-cycle/)
+and [Grafana release](https://github.com/grafana/grafana/releases/tag/v13.2.3).
+
+Create the initial Grafana administrator password outside Git:
+
+```sh
+mkdir -p .local
+python3 - <<'PYCODE'
+from pathlib import Path
+import secrets
+p = Path('.local/grafana_admin_password')
+if not p.exists():
+    p.write_text(secrets.token_urlsafe(32) + '\n')
+    p.chmod(0o644)
+Path('.local').chmod(0o700)
+PYCODE
+# With the normal Go environment loaded, restart the host API:
+cd backend
+METRICS_ADDR=0.0.0.0:9091 go run ./cmd/api
+# In another terminal, from the repository root:
+docker compose --profile observability up -d prometheus grafana
+```
+
+Start ordinary infrastructure as described in README first. Open
+http://localhost:3000/d/cartside-overview and sign in as `local-admin` (or
+`GRAFANA_ADMIN_USER`) with the password in `.local/grafana_admin_password`.
+The host directory is private (0700); the file is readable by Grafana's container UID (0644). `GRAFANA_PASSWORD_FILE` overrides that path. Do not use example credentials.
+Grafana creates the administrator only on first initialization of its named volume;
+changing the file later does not reset an existing administrator password. Use
+Grafana's password change flow for an initialized instance. Anonymous access and
+self-registration are disabled. The profile's password file is not needed by
+ordinary Compose startup. Stop only monitoring with
+`docker compose --profile observability stop prometheus grafana`; data persists.
+Do not use `down -v` on your developer project.
+
+`METRICS_ADDR` defaults to empty (disabled). It creates a separate HTTP listener
+serving `GET /metrics`; it is never added to the application router, Vite, or the
+OIDC routes. Both servers shut down on process termination; a metrics bind failure
+fails startup. The API's database readiness and shutdown behavior remain intact.
+`0.0.0.0:9091` allows the Prometheus container to reach host Go via
+`host.docker.internal:9091`; Compose provides the Linux host-gateway mapping.
+This also exposes unauthenticated metrics to networks allowed by the host firewall.
+Restrict inbound TCP 9091 to trusted local/Docker sources. Loopback-only binding
+is preferable when scraping directly on the host but is generally unreachable
+from containers. This setup is local development infrastructure, not a secured
+monitoring deployment.
+
+Grafana publishes only `127.0.0.1:3000`; Prometheus has **no host port** and APISIX's
+export listener `apisix:9091/apisix/prometheus/metrics` stays inside the Compose
+network. Containers on that network can scrape without login. For temporary local
+Prometheus debugging, add a private Compose override publishing
+`127.0.0.1:9090:9090` on `prometheus`; then visit `/targets` or `/graph` at
+http://localhost:9090. Remove the override afterward. Never publish APISIX's
+export port or put metrics behind the frontend catch-all.
+
+Prometheus scrapes every **15s**, with a **5s** timeout. Retention is bounded by
+**7 days or 1GB**, whichever is reached first (block/WAL overhead means this is not
+a strict filesystem quota). `prometheus_data` and `grafana_data` are named volumes.
+Provisioning files and the dashboard JSON are committed under `infra/observability`.
+Grafana uses the internal Prometheus URL with a fixed data source UID; no manual
+imports or browser credentials in provisioning are needed.
+
+### Go metric contract
+
+The maintained `prometheus/client_golang` client (v1.23.2, compatible with this
+repository's Go 1.24 baseline) uses one dedicated registry per API process,
+including Go and process collectors registered once. No global registry is used.
+Metrics attach to the existing completion defers, not additional nested handlers.
+
+| Metric | Labels / meaning |
+| --- | --- |
+| `cartside_http_requests_total` | `method`, Chi `route`, `status`; completed incoming API requests |
+| `cartside_http_request_duration_seconds` | Same labels; classic histogram of completion time |
+| `cartside_http_requests_in_flight` | No labels; active incoming API requests, including probes |
+| `cartside_assistant_calls_total` | Fixed `operation=shopping_completion`, `provider=mock`, bounded `outcome` |
+| `cartside_assistant_call_duration_seconds` | Same labels; complete outbound client operation including response validation |
+
+HTTP methods are GET/POST/PUT/PATCH/DELETE/OPTIONS/HEAD or OTHER. Status is
+1xx–5xx, or `interrupted` when no response status exists during stack unwinding.
+Cancellation records the observed handler response, consistent with completion
+logs; an implicit completed response is 200 even if the peer disconnected.
+Routes use templates, never raw paths. Unknown paths and authentication rejection
+before routing use `unmatched`; this intentionally cannot identify the rejected
+URL. No query, prompt, request ID, identity, product ID, or error string is a label.
+Assistant outcomes use the bounded values documented under Events below; each
+client invocation counts once, including cancellation and validation failures.
+Disabled assistant requests do not create outbound calls.
+
+API histogram finite buckets (seconds):
+`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10`.
+They cover fast local operations, the 1s readiness timeout, assistant work, the
+5s gateway API timeout, and 10s API read/write timeouts. Assistant buckets:
+`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3`, focused around the
+1s gateway provider timeout and 2s client timeout. Both include automatic +Inf;
+HTTP server timeouts do not guarantee that a handler stops at exactly that limit.
+
+### Gateway contract and dashboard interpretation
+
+A global Prometheus plugin rule covers all routes. The pinned
+[plugin schema](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/prometheus.lua)
+only supports `prefer_name`; it has no per-label disable switch. We keep IDs,
+configure no extra labels, and use actual exported `apisix_http_status` counters
+and `apisix_http_latency_bucket` histograms. Latency is **milliseconds**, with
+`type=request` selected for end-to-end gateway timing. The
+[exporter](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/prometheus/exporter.lua)
+uses configured route templates for `matched_uri`, not arbitrary request paths.
+Its unavoidable labels include `consumer`, `node` (upstream IP), `matched_host`,
+service, request type and model metadata. Current routes have bounded static IDs,
+no APISIX consumers, no user-selected model, and fixed upstreams; upstream IPs can
+change on restarts. Dynamic upstreams, consumers, or model selection would require
+a renewed cardinality/privacy review. No extra potentially sensitive labels are
+enabled. AI calls bypass ordinary Nginx upstream timing; use request latency and
+Go outbound metrics. Prometheus drops `apisix_llm_.*` series: mock usage is
+synthetic and cannot measure real model tokens or cost. There are no token/cost panels.
+
+The overview shows scrape health, API rate/5xx errors, API p50/p95, in-flight
+requests, assistant rate/failure outcomes/p50/p95, and gateway rate/5xx/p95.
+API and gateway panels describe overlapping boundaries; **never sum them as
+independent customer requests**. Gateway includes frontend, auth and internal AI.
+Health routes are excluded from traffic/latency panels; in-flight includes them.
+An empty panel can mean no calls/outcomes yet, fewer than two scrapes, or a down
+target. Zero means a present series with no activity. Empty quantiles/NaN indicate
+no bucket observations in the rate window. Look at scrape health first, then
+create traffic and allow the 15s APISIX export-cache refresh plus two scrapes. Classic quantiles aggregate bucket rates
+with `sum by (le, route)` (or `le` for the one fixed assistant operation/provider).
+Sparse local traffic makes estimated quantiles coarse, not exact request timings.
+
+For a slow/failed assistant request, find the relevant time window and outcome
+in Grafana, compare API and outbound latency with gateway request latency, then
+copy that response's `X-Request-ID` from browser developer tools. Filter API,
+internal gateway and mock logs using the commands below. Metrics show aggregate
+symptoms; the ID joins completion records for that individual call. The outbound
+outcome distinguishes timeout, cancellation, rate limiting and rejected output.
 
 ## Trust boundaries
 
@@ -191,3 +329,46 @@ because the shell default was Node 22. No frontend source changed, so frontend
 lint/type-check/unit/build checks were not rerun. Both runners removed their
 disposable containers and volumes; developer data was preserved. No general
 critical-error-log sanitization or production readiness is claimed.
+
+### Metrics milestone verification
+
+Run the isolated monitoring check with Python dependencies from
+`scripts/requirements-ci.txt` installed:
+
+```sh
+python3 -m venv /tmp/cartside-observability-venv
+/tmp/cartside-observability-venv/bin/pip install -r scripts/requirements-ci.txt
+/tmp/cartside-observability-venv/bin/python scripts/verify-observability.py
+# Optional: with frontend npm dependencies and Playwright Chromium installed:
+/tmp/cartside-observability-venv/bin/python scripts/verify-observability.py --browser
+```
+
+The runner ignores `.env`, allocates ephemeral localhost ports and a random Compose
+project, starts a host Go/Chi transport fixture, and cleans up only its own
+containers/volumes. It validates Prometheus with `promtool`, APISIX with
+`apisix test`, target health, success/provider-failure counters and histogram
+counts, every overview query, authenticated Grafana dashboard provisioning, and
+known sensitive values in Go and gateway exposition. It exercises transport
+boundaries, not production OIDC authorization or shopping persistence. Unit tests
+cover isolated registries, route templates, bounded unknown paths, in-flight
+counts, interrupted handlers, and outbound failure/cancellation outcomes.
+
+Verified for this milestone on 2026-10-23: Go formatting, vet, unit/race tests and
+build; all changed/new YAML/JSON parsing; ordinary Compose configuration without
+Grafana credentials; `promtool check config`; `apisix test`; both scrape targets
+UP; ordinary, successful assistant and controlled provider-failure traffic;
+expected counters, histogram counts and positive duration sums; every dashboard
+query returning series; authenticated Grafana provisioning; and sensitive fixture
+checks on full Go/APISIX exposition. The existing isolated AI gateway regression
+suite passed authentication, namespace/model/size restrictions, correlation,
+concurrency, no-retry and all provider-fault scenarios. A smoke run of the actual
+API verified liveness, metrics startup, SIGTERM and closure of both listeners.
+Frontend source did not change; frontend build/unit checks and shopping/database
+integration suites were not rerun. All disposable stack resources were removed;
+developer services and volumes were preserved.
+
+The `--browser` run also passed Chromium sign-in and rendered overview panels
+(scrape health, assistant failures and gateway latency). This was a browser smoke
+check, not a pixel review, accessibility audit, or cross-browser test. There were
+no remaining verification blockers. The committed runner waits for login navigation and completes browser
+verification before removing the isolated stack.

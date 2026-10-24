@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,8 @@ func TestOutboundCorrelationAndSafeOutcomes(t *testing.T) {
 				w.WriteHeader(tc.status)
 				w.Write([]byte(tc.body))
 			}))
+			metrics := observability.NewMetrics()
+			c.metrics = metrics
 			ctx := observability.WithID(context.Background(), "correlation-test")
 			if tc.cancel {
 				var cancel context.CancelFunc
@@ -57,6 +60,19 @@ func TestOutboundCorrelationAndSafeOutcomes(t *testing.T) {
 			_, err := c.Complete(ctx, aiprotocol.Input{Version: 1, Scenario: "secret-prompt", Candidates: []aiprotocol.Candidate{}})
 			if err == nil {
 				t.Fatal("expected failure")
+			}
+			w := httptest.NewRecorder()
+			metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+			for _, name := range []string{"cartside_assistant_calls_total", "cartside_assistant_call_duration_seconds_count"} {
+				want := name + `{operation="shopping_completion",outcome="` + tc.want + `",provider="mock"} 1`
+				if !strings.Contains(w.Body.String(), want) {
+					t.Errorf("missing %s", want)
+				}
+			}
+			for _, secret := range []string{"secret-prompt", "correlation-test", "secret-provider-error"} {
+				if strings.Contains(w.Body.String(), secret) {
+					t.Error("sensitive metric")
+				}
 			}
 			var event map[string]any
 			if json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &event) != nil {

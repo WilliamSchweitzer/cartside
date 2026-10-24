@@ -1,6 +1,11 @@
 # File-driven standalone routes. Keep the final #END marker.
 # Keep the OIDC session settings identical on all protected routes.
 # Avoid YAML aliases: APISIX normalizes route/upstream tables in place.
+global_rules:
+- id: metrics
+  plugins:
+    prometheus:
+      prefer_name: false
 routes:
 # Reserve the complete internal namespace: no fallthrough to OIDC/Vite.
 - id: internal-deny

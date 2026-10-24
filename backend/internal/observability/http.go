@@ -34,10 +34,18 @@ func newID() string {
 }
 
 // Middleware records only route templates; a supplied safe ID conveys no identity.
-func Middleware(component string, route func(*http.Request) string) func(http.Handler) http.Handler {
+func Middleware(component string, route func(*http.Request) string, metrics ...*Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
+			var metric *Metrics
+			if len(metrics) > 0 {
+				metric = metrics[0]
+			}
+			if metric != nil {
+				metric.inflight.Inc()
+				defer metric.inflight.Dec()
+			}
 			ids := r.Header.Values(Header)
 			id := ""
 			if len(ids) == 1 && ValidID(ids[0]) {
@@ -58,6 +66,9 @@ func Middleware(component string, route func(*http.Request) string) func(http.Ha
 				label := route(r)
 				if label == "" {
 					label = "unmatched"
+				}
+				if metric != nil {
+					metric.completed(r.Method, label, status, time.Since(start))
 				}
 				category := "none"
 				switch {

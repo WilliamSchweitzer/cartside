@@ -39,14 +39,19 @@ func failure(c ErrorCode) error { return &Error{Code: c} }
 type Client struct {
 	endpoint, credential string
 	http                 *http.Client
+	metrics              *observability.Metrics
 }
 
-func NewClient(endpoint, credential string) (*Client, error) {
+func NewClient(endpoint, credential string, metrics ...*observability.Metrics) (*Client, error) {
 	u, e := url.Parse(endpoint)
 	if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/internal/ai/chat/completions" || len(credential) < 32 || strings.HasPrefix(credential, "replace_with_") || strings.ContainsAny(credential, "\r\n") {
 		return nil, failure(InvalidInput)
 	}
-	return &Client{endpoint: endpoint, credential: credential, http: &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 2 * time.Second, MaxResponseHeaderBytes: 4096}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	var metric *observability.Metrics
+	if len(metrics) > 0 {
+		metric = metrics[0]
+	}
+	return &Client{metrics: metric, endpoint: endpoint, credential: credential, http: &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 2 * time.Second, MaxResponseHeaderBytes: 4096}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (result aiprotocol.Output, resultErr error) {
 	start := time.Now()
@@ -63,6 +68,7 @@ func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (result a
 		if transportCancelled {
 			outcome = "cancelled"
 		}
+		c.metrics.AssistantCompleted(outcome, time.Since(start))
 		slog.InfoContext(ctx, "assistant_call_completed", "request_id", observability.ID(ctx), "operation", "shopping_completion", "provider", "mock", "duration_ms", float64(time.Since(start).Microseconds())/1000, "status", status, "outcome", outcome)
 	}()
 	var out aiprotocol.Output

@@ -42,3 +42,6 @@ go.work.sum
 /frontend/test-results/
 /frontend/playwright-report/
 __pycache__/
+
+# Private local monitoring credentials
+.local/

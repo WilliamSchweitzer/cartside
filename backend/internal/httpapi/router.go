@@ -13,21 +13,21 @@ import (
 
 // NewRouter constructs the application's HTTP routes.
 func NewRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts ...Cart) http.Handler {
-	return newRouter(checkReady, authenticate, catalog, csrf, nil, nil, nil, carts...)
+	return newRouter(checkReady, authenticate, catalog, csrf, nil, nil, nil, nil, carts...)
 }
 
 // NewRouterWithCheckout wires checkout alongside the existing routes.
 func NewRouterWithCheckout(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts Cart, checkout Checkout) http.Handler {
-	return newRouter(checkReady, authenticate, catalog, csrf, checkout, nil, nil, carts)
+	return newRouter(checkReady, authenticate, catalog, csrf, checkout, nil, nil, nil, carts)
 }
 
-func NewRouterWithAssistant(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts Cart, checkout Checkout, assistant Assistant, limiter *AssistantLimiter) http.Handler {
-	return newRouter(checkReady, authenticate, catalog, csrf, checkout, assistant, limiter, carts)
+func NewRouterWithAssistant(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, carts Cart, checkout Checkout, assistant Assistant, limiter *AssistantLimiter, metrics ...*observability.Metrics) http.Handler {
+	return newRouter(checkReady, authenticate, catalog, csrf, checkout, assistant, limiter, metrics, carts)
 }
 
-func newRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, checkout Checkout, assistant Assistant, limiter *AssistantLimiter, carts ...Cart) http.Handler {
+func newRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, checkout Checkout, assistant Assistant, limiter *AssistantLimiter, metrics []*observability.Metrics, carts ...Cart) http.Handler {
 	r := chi.NewRouter()
-	r.Use(observability.Middleware("api", observability.ChiRoute))
+	r.Use(observability.Middleware("api", observability.ChiRoute, metrics...))
 	r.Use(func(next http.Handler) http.Handler {
 		protected := authenticate(csrf.Middleware(next))
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

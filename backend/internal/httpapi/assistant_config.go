@@ -5,11 +5,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/shoppingassistant"
 )
 
 // ConfigureAssistant does not inspect AI credentials or construct a client when disabled.
-func ConfigureAssistant(getenv func(string) string, catalog shoppingassistant.Catalog) (Assistant, *AssistantLimiter, error) {
+func ConfigureAssistant(getenv func(string) string, catalog shoppingassistant.Catalog, metrics ...*observability.Metrics) (Assistant, *AssistantLimiter, error) {
 	flag := getenv("CARTSIDE_ASSISTANT_ENABLED")
 	if flag == "" || flag == "false" {
 		return nil, nil, nil
@@ -27,7 +28,7 @@ func ConfigureAssistant(getenv func(string) string, catalog shoppingassistant.Ca
 			*target = n
 		}
 	}
-	client, err := shoppingassistant.NewClient(getenv("CARTSIDE_AI_GATEWAY_URL"), getenv("CARTSIDE_AI_SERVICE_KEY"))
+	client, err := shoppingassistant.NewClient(getenv("CARTSIDE_AI_GATEWAY_URL"), getenv("CARTSIDE_AI_SERVICE_KEY"), metrics...)
 	if err != nil {
 		return nil, nil, errors.New("invalid assistant gateway configuration")
 	}

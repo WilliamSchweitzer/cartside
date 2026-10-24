@@ -1,0 +1,395 @@
+{
+  "uid": "cartside-overview",
+  "title": "Cartside overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "cartside",
+    "local"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Target scrape health (1 = UP)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "description": "0 means scrape failed; absent means target not configured. This does not indicate database readiness.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=~\"cartside-.*\"}",
+          "legendFormat": "{{job}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "API request rate (health excluded)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(cartside_http_requests_total{route!~\"/health/.*\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "API server errors (5xx/s)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(cartside_http_requests_total{route!~\"/health/.*\",status=\"5xx\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "API p50 latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, route) (rate(cartside_http_request_duration_seconds_bucket{route!~\"/health/.*\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "API p95 latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(cartside_http_request_duration_seconds_bucket{route!~\"/health/.*\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "In-flight API requests",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Includes probes. Zero means idle.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cartside_http_requests_in_flight",
+          "legendFormat": "API"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Assistant outbound calls",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(cartside_assistant_calls_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Assistant failure outcomes",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(cartside_assistant_calls_total{outcome!=\"success\"}[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Assistant p50 latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(cartside_assistant_call_duration_seconds_bucket[5m])))",
+          "legendFormat": "outbound"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Assistant p95 latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cartside_assistant_call_duration_seconds_bucket[5m])))",
+          "legendFormat": "outbound"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Gateway requests (health excluded)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "description": "Includes frontend/auth/internal AI traffic. Overlaps API traffic: never add these rates together.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(apisix_http_status{route!=\"health\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Gateway errors (5xx/s)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "description": "No data means no observations in this window; check scrape health. Rates need two scrapes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(apisix_http_status{route!=\"health\",code=~\"5..\"}[5m]))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 13,
+      "title": "Gateway p95 request latency",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "description": "APISIX exports milliseconds. AI bypasses normal Nginx upstream timing; use request latency and Go outbound metrics.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cartside-prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(apisix_http_latency_bucket{route!=\"health\",type=\"request\"}[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

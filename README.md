@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. The embedded demo assistant and individual suggestion acceptance are implemented; see [the AI guide](docs/ai-mock.md). Request correlation and safe JSON request/assistant logs are implemented across APISIX, Go, and the mock provider; see [the observability guide](docs/observability.md). Metrics, dashboards, and distributed tracing remain planned. Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. The embedded demo assistant and individual suggestion acceptance are implemented; see [the AI guide](docs/ai-mock.md). Request correlation and safe JSON request/assistant logs are implemented across APISIX, Go, and the mock provider; see [the observability guide](docs/observability.md). Optional local Prometheus metrics and a provisioned Grafana overview are implemented; distributed tracing remains planned. Unless stated otherwise, the architecture below describes the intended design.
 
 ## Mock-assisted MVP verification
 
@@ -1566,3 +1566,20 @@ prompt → individual acceptance/decline → shared cart. Configuration parsing 
 whitespace checks passed. Developer data was preserved. Screen readers, other
 browser engines, live providers, and remote CI were not exercised. See the
 [AI verification record](docs/ai-mock.md#embedded-panel-milestone).
+
+## Optional local monitoring
+
+The `observability` Compose profile adds Prometheus 3.13.1 and Grafana 13.2.3,
+with committed data source/dashboard provisioning and persistent named volumes.
+Normal shopping needs neither service nor Grafana credentials. Follow
+[the observability guide](docs/observability.md#local-metrics-and-dashboard) to
+create the untracked password file, run host Go with `METRICS_ADDR=0.0.0.0:9091`,
+and start `docker compose --profile observability up -d prometheus grafana`.
+Open http://localhost:3000/d/cartside-overview as `local-admin` using that private
+password. Grafana binds localhost; Prometheus and APISIX metrics have no host port.
+The host Go scrape listener needs inbound firewall restrictions. Prometheus uses
+15s scrapes, 5s timeouts and 7d/1GB retention. API/gateway traffic overlaps and must
+not be summed. Health probes are separate; synthetic mock tokens/costs are omitted.
+Use dashboard latency/outcomes to locate a time window, then the browser response's
+`X-Request-ID` to join API, gateway and mock completion logs. The guide documents
+metrics, buckets, no-data behavior, credentials and exact verification limitations.

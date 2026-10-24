@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/WilliamSchweitzer/cartside/backend/internal/catalog"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/database"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/httpapi"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/orders"
 )
 
@@ -49,15 +51,37 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var metrics *observability.Metrics
+	var metricsServer *http.Server
+	metricsErr := make(chan error, 1)
+	if metricsAddr := os.Getenv("METRICS_ADDR"); metricsAddr != "" {
+		listener, err := net.Listen("tcp", metricsAddr)
+		if err != nil {
+			return err
+		}
+		metrics = observability.NewMetrics()
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", metrics.Handler())
+		metricsServer = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+		go func() { metricsErr <- metricsServer.Serve(listener) }()
+		defer metricsServer.Close()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if metricsServer.Shutdown(ctx) != nil {
+				_ = metricsServer.Close()
+			}
+		}()
+	}
 	products := catalog.NewRepository(pool)
 	carts := cart.NewService(pool, products)
-	assistant, limiter, err := httpapi.ConfigureAssistant(os.Getenv, products)
+	assistant, limiter, err := httpapi.ConfigureAssistant(os.Getenv, products, metrics)
 	if err != nil {
 		return err
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.NewRouterWithAssistant(pool.Ping, verifier.Middleware, products, csrf, carts, orders.NewService(pool, carts, products), assistant, limiter),
+		Handler:           httpapi.NewRouterWithAssistant(pool.Ping, verifier.Middleware, products, csrf, carts, orders.NewService(pool, carts, products), assistant, limiter, metrics),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -72,6 +96,9 @@ func run() error {
 
 	select {
 	case err := <-serverErr:
+		return err
+	case err := <-metricsErr:
+		_ = server.Close()
 		return err
 	case <-ctx.Done():
 		stop() // Restore default signal behavior so a second signal can force exit.
