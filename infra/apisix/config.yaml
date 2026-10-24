@@ -38,7 +38,7 @@ nginx_config:
     access_log_format: '{"event":"gateway_request_completed","request_id":"$sent_http_x_request_id","method":"$request_method","route":"$cartside_route","status":$status,"upstream_status":"$upstream_status","duration_s":$request_time}'
 
 plugins:
-  # ai-proxy 3.14.1 invokes Prometheus LLM counters even without route metrics.
+  # ai-proxy invokes Prometheus LLM counters even without route metrics.
   - prometheus
   - request-id
   - ai-proxy

@@ -1,6 +1,6 @@
 services:
   apisix:
-    image: apache/apisix:3.14.1-debian
+    image: apache/apisix:3.19.0-ubuntu
     ports:
       - "127.0.0.1:9080:9080"
     environment:
@@ -36,6 +36,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./infra/observability/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./infra/observability/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
 
   grafana:

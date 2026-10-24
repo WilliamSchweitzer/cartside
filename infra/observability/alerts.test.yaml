@@ -1,0 +1,646 @@
+# Deterministic rule behavior, 30s samples; production evaluations are every 15s.
+rule_files:
+- rules/cartside.yaml
+evaluation_interval: 15s
+fuzzy_compare: true
+tests:
+- name: healthy traffic and representative fast histogram
+  interval: 30s
+  input_series:
+  - &id001
+    series: up{job="cartside-api"}
+    values: 1+0x40
+  - &id002
+    series: up{job="cartside-gateway"}
+    values: 1+0x40
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="success"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: idle counters and no application observations
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: present idle application series
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 10+0x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="provider_unavailable"}
+    values: 10+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 10+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 10+0x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 10+0x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: high ratios and slow histogram below traffic guards
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 0+1x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="timeout"}
+    values: 0+1x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+1x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+1x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: sustained server failures respect for duration
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: &id004
+        summary: Sustained API 5xx ratio above 10 percent
+        description: A route has over 10% 5xx responses with at least 20 completions in 5m for 2m. Health/metrics
+          probes and ordinary 4xx errors do not contribute failures.
+        dashboard: http://localhost:3000/d/cartside-overview?viewPanel=3
+        investigation: Compare API rate (panel 2) and errors; inspect safe API/gateway logs using a failing response's
+          X-Request-ID. See docs/observability.md.
+  promql_expr_test:
+  - expr: ALERTS{alertname="CartsideAPIHighErrorRatio",alertstate="pending"}
+    eval_time: 2m
+    exp_samples:
+    - labels: '{__name__="ALERTS",alertname="CartsideAPIHighErrorRatio",alertstate="pending",route="/products",severity="warning"}'
+      value: 1
+- name: ordinary 4xx and probes are not API server failures
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="4xx"}
+    values: 0+20x40
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/health/ready",status="5xx"}
+    values: 0+20x40
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/metrics",status="5xx"}
+    values: 0+20x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/health/ready",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/health/ready",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/health/ready",method="GET",status="2xx",le="2"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/health/ready",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/health/ready",status="2xx"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/metrics",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/metrics",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/metrics",method="GET",status="2xx",le="2"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/metrics",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/metrics",status="2xx"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+- name: 5xx ratio below ten percent
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 0+1x40
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+19x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+- name: slow histogram quantile and observation guard
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: CartsideAPIHighLatency
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: &id005
+        summary: Sustained API p95 above one second
+        description: A route's estimated classic-histogram p95 exceeds 1s with at least 20 observations in 5m for
+          2m. Health/metrics probes are excluded; sparse bucket estimates are coarse.
+        dashboard: http://localhost:3000/d/cartside-overview?viewPanel=5
+        investigation: Compare API p95 with assistant p95 (panel 10) and gateway p95 (panel 13); correlate slow
+          responses' X-Request-ID with safe logs. See docs/observability.md.
+  promql_expr_test:
+  - expr: histogram_quantile(0.95, sum by (le, route) (rate(cartside_http_request_duration_seconds_bucket{job="cartside-api"}[5m])))
+    eval_time: 8m
+    exp_samples:
+    - labels: '{route="/products"}'
+      value: 1.95
+- name: sustained provider_unavailable
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="provider_unavailable"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations: &id003
+        summary: Sustained assistant provider or transport failures
+        description: Over 20% of eligible outbound calls failed with at least 20 eligible calls in 5m for 2m. Rate
+          limits, client cancellations, rejected requests and input/size errors are excluded from both sides.
+        dashboard: http://localhost:3000/d/cartside-overview?viewPanel=8
+        investigation: Compare outcomes (panels 7/8), including rate_limited separately, and outbound latency (panel
+          10). Correlate X-Request-ID across API, internal gateway and mock logs. See docs/observability.md.
+- name: sustained timeout
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="timeout"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations: *id003
+- name: sustained invalid_provider_output
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="invalid_provider_output"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations: *id003
+- name: rate_limited alone is not a provider outage
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="rate_limited"}
+    values: 0+20x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: cancelled alone is not a provider outage
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="cancelled"}
+    values: 0+20x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: request_rejected alone is not a provider outage
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="request_rejected"}
+    values: 0+20x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: invalid_input alone is not a provider outage
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="invalid_input"}
+    values: 0+20x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: payload_too_large alone is not a provider outage
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="payload_too_large"}
+    values: 0+20x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: excluded calls cannot satisfy provider traffic guard
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="provider_unavailable"}
+    values: 0+1x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="rate_limited"}
+    values: 0+100x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="cancelled"}
+    values: 0+100x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: provider ratio below twenty percent
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="provider_unavailable"}
+    values: 0+1x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="success"}
+    values: 0+19x40
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: server and provider recover after failures leave window
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 0+10x10 100+0x30
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x40
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="timeout"}
+    values: 0+10x10 100+0x30
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="success"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: *id004
+  - eval_time: 4m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations: *id003
+  - eval_time: 12m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+- name: latency recovers with fast observations
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+10x10 100+0x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x10 100+0x30
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x10 100+0x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="4xx",le=".5"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="4xx",le="1"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="4xx",le="2"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="4xx",le="+Inf"}
+    values: 0+10x40
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="4xx"}
+    values: 0+10x40
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: CartsideAPIHighLatency
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: *id005
+  - eval_time: 12m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+- name: counter resets preserve sustained failure detection
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="5xx"}
+    values: 0+10x10 0+10x30
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="timeout"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+0x40
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x10 0+10x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: *id004
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations: *id003
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        route: /products
+      exp_annotations: *id005
+- name: healthy counter and bucket resets do not alert
+  interval: 30s
+  input_series:
+  - *id001
+  - *id002
+  - series: cartside_http_requests_total{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x10 0+10x30
+  - series: cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome="success"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le=".5"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="1"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="2"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_bucket{job="cartside-api",route="/products",method="GET",status="2xx",le="+Inf"}
+    values: 0+10x10 0+10x30
+  - series: cartside_http_request_duration_seconds_count{job="cartside-api",method="GET",route="/products",status="2xx"}
+    values: 0+10x10 0+10x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+- name: cartside-api failed scrape then recovery
+  interval: 30s
+  input_series:
+  - series: up{job="cartside-api"}
+    values: 0+0x4 1+0x36
+  - series: up{job="cartside-gateway"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideAPITargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-api
+      exp_annotations: &id006
+        summary: Expected API metrics target is unavailable
+        description: Monitoring is running but API scraping failed or the expected target is absent. Check METRICS_ADDR,
+          host connectivity and /targets. This is not database readiness.
+        dashboard: http://localhost:3000/d/cartside-overview?viewPanel=1
+        investigation: See docs/observability.md; check process logs. For customer failures correlate X-Request-ID
+          response headers with safe API/gateway logs.
+  - eval_time: 3m
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+- name: cartside-api missing expected target
+  interval: 30s
+  input_series:
+  - series: up{job="cartside-gateway"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideAPITargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-api
+      exp_annotations: *id006
+  - eval_time: 1m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+- name: cartside-gateway failed scrape then recovery
+  interval: 30s
+  input_series:
+  - series: up{job="cartside-gateway"}
+    values: 0+0x4 1+0x36
+  - series: up{job="cartside-api"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-gateway
+      exp_annotations: &id007
+        summary: Expected APISIX metrics target is unavailable
+        description: Monitoring is running but APISIX scraping failed or the expected target is absent. Check /targets,
+          the exporter listener and gateway control health.
+        dashboard: http://localhost:3000/d/cartside-overview?viewPanel=1
+        investigation: See docs/observability.md; check gateway logs. For customer failures correlate X-Request-ID
+          response headers with safe API/gateway logs.
+  - eval_time: 3m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+- name: cartside-gateway missing expected target
+  interval: 30s
+  input_series:
+  - series: up{job="cartside-api"}
+    values: 1+0x40
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: CartsideGatewayTargetDown
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-gateway
+      exp_annotations: *id007
+  - eval_time: 1m
+    alertname: CartsideAPITargetDown
+    exp_alerts: []
+- name: no scrape series differs from empty application traffic
+  interval: 30s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: CartsideAPITargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-api
+      exp_annotations: *id006
+  - eval_time: 1m
+    alertname: CartsideGatewayTargetDown
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        job: cartside-gateway
+      exp_annotations: *id007
+  - eval_time: 1m
+    alertname: CartsideAPIHighErrorRatio
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideAPIHighLatency
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: CartsideAssistantProviderFailures
+    exp_alerts: []

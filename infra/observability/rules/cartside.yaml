@@ -1,0 +1,67 @@
+# Local demo thresholds, not production SLOs. Prometheus evaluates every 15s.
+groups:
+  - name: cartside-local
+    rules:
+      - alert: CartsideAPITargetDown
+        expr: (max(up{job="cartside-api"}) == 0) or absent(up{job="cartside-api"})
+        for: 1m
+        labels:
+          severity: warning
+          job: cartside-api
+        annotations:
+          summary: Expected API metrics target is unavailable
+          description: Monitoring is running but API scraping failed or the expected target is absent. Check METRICS_ADDR, host connectivity and /targets. This is not database readiness.
+          dashboard: http://localhost:3000/d/cartside-overview?viewPanel=1
+          investigation: See docs/observability.md; check process logs. For customer failures correlate X-Request-ID response headers with safe API/gateway logs.
+      - alert: CartsideGatewayTargetDown
+        expr: (max(up{job="cartside-gateway"}) == 0) or absent(up{job="cartside-gateway"})
+        for: 1m
+        labels:
+          severity: warning
+          job: cartside-gateway
+        annotations:
+          summary: Expected APISIX metrics target is unavailable
+          description: Monitoring is running but APISIX scraping failed or the expected target is absent. Check /targets, the exporter listener and gateway control health.
+          dashboard: http://localhost:3000/d/cartside-overview?viewPanel=1
+          investigation: See docs/observability.md; check gateway logs. For customer failures correlate X-Request-ID response headers with safe API/gateway logs.
+      - alert: CartsideAPIHighErrorRatio
+        expr: |
+          (sum by (route) (rate(cartside_http_requests_total{job="cartside-api",route!~"/health/.*|/metrics",status="5xx"}[5m]))
+          / sum by (route) (rate(cartside_http_requests_total{job="cartside-api",route!~"/health/.*|/metrics"}[5m])) > 0.10)
+          and on (route)
+          (sum by (route) (increase(cartside_http_requests_total{job="cartside-api",route!~"/health/.*|/metrics"}[5m])) >= 20)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sustained API 5xx ratio above 10 percent
+          description: A route has over 10% 5xx responses with at least 20 completions in 5m for 2m. Health/metrics probes and ordinary 4xx errors do not contribute failures.
+          dashboard: http://localhost:3000/d/cartside-overview?viewPanel=3
+          investigation: Compare API rate (panel 2) and errors; inspect safe API/gateway logs using a failing response's X-Request-ID. See docs/observability.md.
+      - alert: CartsideAPIHighLatency
+        expr: |
+          (histogram_quantile(0.95, sum by (le, route) (rate(cartside_http_request_duration_seconds_bucket{job="cartside-api",route!~"/health/.*|/metrics"}[5m]))) > 1)
+          and on (route)
+          (sum by (route) (increase(cartside_http_request_duration_seconds_count{job="cartside-api",route!~"/health/.*|/metrics"}[5m])) >= 20)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sustained API p95 above one second
+          description: A route's estimated classic-histogram p95 exceeds 1s with at least 20 observations in 5m for 2m. Health/metrics probes are excluded; sparse bucket estimates are coarse.
+          dashboard: http://localhost:3000/d/cartside-overview?viewPanel=5
+          investigation: Compare API p95 with assistant p95 (panel 10) and gateway p95 (panel 13); correlate slow responses' X-Request-ID with safe logs. See docs/observability.md.
+      - alert: CartsideAssistantProviderFailures
+        expr: |
+          (sum(rate(cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome=~"timeout|provider_unavailable|invalid_provider_output"}[5m]))
+          / sum(rate(cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome=~"success|timeout|provider_unavailable|invalid_provider_output"}[5m])) > 0.20)
+          and
+          (sum(increase(cartside_assistant_calls_total{job="cartside-api",operation="shopping_completion",provider="mock",outcome=~"success|timeout|provider_unavailable|invalid_provider_output"}[5m])) >= 20)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Sustained assistant provider or transport failures
+          description: Over 20% of eligible outbound calls failed with at least 20 eligible calls in 5m for 2m. Rate limits, client cancellations, rejected requests and input/size errors are excluded from both sides.
+          dashboard: http://localhost:3000/d/cartside-overview?viewPanel=8
+          investigation: Compare outcomes (panels 7/8), including rate_limited separately, and outbound latency (panel 10). Correlate X-Request-ID across API, internal gateway and mock logs. See docs/observability.md.

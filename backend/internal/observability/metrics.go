@@ -40,7 +40,7 @@ func (m *Metrics) AssistantCompleted(outcome string, duration time.Duration) {
 		return
 	}
 	switch outcome {
-	case "success", "timeout", "cancelled", "rate_limited", "invalid_provider_output", "provider_unavailable", "invalid_input", "payload_too_large":
+	case "success", "request_rejected", "timeout", "cancelled", "rate_limited", "invalid_provider_output", "provider_unavailable", "invalid_input", "payload_too_large":
 	default:
 		outcome = "provider_unavailable"
 	}

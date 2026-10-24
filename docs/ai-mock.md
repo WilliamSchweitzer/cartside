@@ -1,6 +1,6 @@
 # First AI milestone: deterministic local protocol testing
 
-Implemented: an internal Go shopping assistant → APISIX 3.14.1 `ai-proxy` →
+Implemented: an internal Go shopping assistant → APISIX 3.19.0 `ai-proxy` →
 local Go mock service, plus an authenticated, rate-limited public assistant
 endpoint (disabled by default), an embedded demo panel, and individual
 suggestion acceptance through the ordinary cart API. No external model calls
@@ -89,7 +89,8 @@ flowchart LR
 
 ## Pinned plugin decision
 
-The existing `apache/apisix:3.14.1-debian` image is unchanged. Consulted sources:
+The original milestone used `apache/apisix:3.14.1-debian`; the current pin is
+`apache/apisix:3.19.0-ubuntu`. See [upgrade findings and regression evidence](observability.md#apisix-319-upgrade). The following are historical sources for the original implementation:
 
 - [APISIX 3.14 ai-proxy documentation](https://apisix.apache.org/docs/apisix/3.14/plugins/ai-proxy/)
 - [3.14.1 plugin schema](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/ai-proxy/schema.lua)

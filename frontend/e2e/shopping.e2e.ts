@@ -52,9 +52,18 @@ test.afterEach(async ({ context }, info) => {
 })
 
 test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile checkout and logout', async ({ page, browser }) => {
+  let hmrConnected = false
+  page.on('websocket', socket => {
+    if (socket.url().startsWith(config.origin.replace('http:', 'ws:') + '/')) {
+      socket.on('framereceived', event => {
+        if (event.payload.toString().includes('"type":"connected"')) hmrConnected = true
+      })
+    }
+  })
   await page.goto(config.origin+'/api/cart')
   expect((await page.request.get(config.origin+'/api/cart')).status()).toBe(401)
   await login(page)
+  await expect.poll(() => hmrConnected).toBe(true)
   // The same cookie jar has a verified storefront session, but no AI service key.
   expect((await page.request.get(config.origin+'/auth/session')).status()).toBe(200)
   expect((await page.request.post(config.origin+'/internal/ai/chat/completions', {

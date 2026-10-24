@@ -9,7 +9,7 @@ never become metric labels.
 
 Normal shopping and `docker compose up -d --wait` need no monitoring configuration
 or Grafana password. The optional `observability` profile runs Prometheus **3.13.1**
-(LTS branch) and Grafana **13.2.3**. APISIX remains pinned to **3.14.1**.
+(LTS branch) and Grafana **13.2.3**. APISIX is pinned to **3.19.0** (`apache/apisix:3.19.0-ubuntu`).
 See the [Prometheus support policy](https://prometheus.io/docs/introduction/release-cycle/)
 and [Grafana release](https://github.com/grafana/grafana/releases/tag/v13.2.3).
 
@@ -109,12 +109,12 @@ HTTP server timeouts do not guarantee that a handler stops at exactly that limit
 ### Gateway contract and dashboard interpretation
 
 A global Prometheus plugin rule covers all routes. The pinned
-[plugin schema](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/prometheus.lua)
-only supports `prefer_name`; it has no per-label disable switch. We keep IDs,
+[plugin schema](https://github.com/apache/apisix/blob/3.19.0/apisix/plugins/prometheus.lua)
+supports `prefer_name`; plugin metadata now also supports `disabled_labels`. We retain the existing label contract and IDs,
 configure no extra labels, and use actual exported `apisix_http_status` counters
 and `apisix_http_latency_bucket` histograms. Latency is **milliseconds**, with
 `type=request` selected for end-to-end gateway timing. The
-[exporter](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/prometheus/exporter.lua)
+[exporter](https://github.com/apache/apisix/blob/3.19.0/apisix/plugins/prometheus/exporter.lua)
 uses configured route templates for `matched_uri`, not arbitrary request paths.
 Its unavoidable labels include `consumer`, `node` (upstream IP), `matched_host`,
 service, request type and model metadata. Current routes have bounded static IDs,
@@ -148,7 +148,7 @@ outcome distinguishes timeout, cancellation, rate limiting and rejected output.
 
 The browser does not generate the canonical ID. APISIX **replaces every
 browser-supplied ID**, including syntactically valid values, with a UUID using
-APISIX 3.14.1's `request-id` plugin. Browser code can read `X-Request-ID` from the
+APISIX 3.19.0's `request-id` plugin. Browser code can read `X-Request-ID` from the
 same-origin API response in developer tools, including authentication errors.
 No frontend state or token handling is needed.
 
@@ -182,9 +182,9 @@ credential remains gateway-owned. The mock accepts and logs the same bounded ID.
 Neither mock responses, deterministic scenarios, usage behavior, nor retries
 change.
 
-Pinned implementation references: [request-id](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/request-id.lua),
-[AI proxy base](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/ai-proxy/base.lua),
-and [OpenAI driver](https://github.com/apache/apisix/blob/3.14.1/apisix/plugins/ai-drivers/openai-base.lua).
+Pinned implementation references: [request-id](https://github.com/apache/apisix/blob/3.19.0/apisix/plugins/request-id.lua),
+[AI proxy base](https://github.com/apache/apisix/blob/3.19.0/apisix/plugins/ai-proxy/base.lua),
+and [AI providers](https://github.com/apache/apisix/tree/3.19.0/apisix/plugins/ai-providers).
 The isolated gateway verification checks the resulting execution order and
 header propagation, including simultaneous calls with distinct IDs.
 
@@ -213,8 +213,8 @@ selected for the completion event.
 The outbound event records HTTP status when known (`0` means no response
 headers), and a bounded outcome: `success`, `timeout`, `cancelled`,
 `rate_limited`, `invalid_provider_output`, `provider_unavailable`,
-`invalid_input`, or `payload_too_large`. HTTP 408/504 and local deadline failures
-are timeouts; HTTP 429 is rate limiting. Other non-200 responses and transport
+`invalid_input`, `request_rejected`, or `payload_too_large`. HTTP 408/504 and local deadline failures
+are timeouts; HTTP 429 is rate limiting. Other HTTP 4xx responses are `request_rejected`; other non-200 responses and transport
 failures are provider failures. Invalid/oversized output is rejected. No raw
 upstream error is logged. API and outbound events represent different boundaries;
 handlers do not separately log the same failure.
@@ -372,3 +372,217 @@ The `--browser` run also passed Chromium sign-in and rendered overview panels
 check, not a pixel review, accessibility audit, or cross-browser test. There were
 no remaining verification blockers. The committed runner waits for login navigation and completes browser
 verification before removing the isolated stack.
+
+## APISIX 3.19 upgrade
+
+Selected `apache/apisix:3.19.0-ubuntu` on 2026-10-24. The [official downloads
+page](https://apisix.apache.org/downloads/) lists 3.19.0 as current; no newer
+3.19 patch was listed. `docker manifest inspect apache/apisix:3.19.0-ubuntu`
+confirmed Linux amd64/arm64 manifests, and `docker pull` succeeded with index
+digest `sha256:bb4958b943949b3543353481eff1333e10b3323c6095dd0af4406de2b8cf738e`.
+The tag is explicitly pinned; Ubuntu replaces the previous Debian image variant.
+
+Reviewed every intervening release in the [official 3.19.0
+changelog](https://github.com/apache/apisix/blob/3.19.0/CHANGELOG.md), including
+its breaking-change sections and linked implementation changes. The official
+[3.17 migration notes](https://apisix.apache.org/blog/2026/06/15/release-apache-apisix-3.17.0/),
+[3.18 upgrade plans](https://apisix.apache.org/blog/2026/08/20/release-apache-apisix-3.18.0/),
+and [3.19 upgrade plans](https://apisix.apache.org/blog/2026/09/28/release-apache-apisix-3.19.0/)
+provide additional context:
+
+| Release | Relevant changes and Cartside implications |
+| --- | --- |
+| 3.15.0 | Standalone status/validation APIs; duplicate global plugin rules rejected. Cartside has one global Prometheus rule and keeps Admin disabled. Request-ID gains `apisix_request_id` and handles empty IDs; UUID/header behavior remains configured explicitly. Logger formats/backlogs change; Cartside uses Nginx's explicit JSON access format. |
+| 3.16.0 | OIDC TLS verification defaults true (already explicitly true here); Redis session support is unused. Standalone YAML handling and unknown-plugin validation tighten. Prometheus library update and URI argument preservation fixes require runtime regression checks. All enabled plugins are explicitly listed. |
+| 3.17.0 | Standalone resolves environment variables before YAML parsing; current `$ENV://` secret references work in the exercised image. OIDC moves to lua-resty-session 4 options, fixes redirect ports and validated identity forwarding. Migrated all four protected routes to identical flat `cookie_path`, `cookie_http_only`, `cookie_same_site`, `cookie_secure`, `absolute_timeout` settings. `cookie.lifetime` alone is a deprecated alias; other nested flags are not translated. The 3600s limit is now absolute; existing browser sessions may need fresh login. Request-ID adds optional UUIDv7; existing UUID is retained. AI protocol/provider refactoring, size bounds, timeout-to-504 fix and upstream timing variables are covered by the deterministic mock suite; new protocols/streaming/fallback are unused. |
+| 3.18.0 | AI transport defaults to the bundled FFI client; retained the default and verified timeout, no retries, configured provider headers and safe error handling. OIDC validates scopes/claims more strictly and recovers stale/temporarily-unavailable callbacks; no new claim options enabled. Proxy rewrite adds repeated-header support and fixes unsafe URI query handling; existing regex rewriting/removal remains. Serverless body reframing changes do not require a config change (functions inspect, sanitize and clone headers, without replacing bodies). Prometheus adds LLM histogram types/token distributions, model-label bounds and optional disabled labels, and updates its histogram library. LLM series remain dropped. Logger hardening does not replace the explicit safe format or `crit` error level. |
+| 3.19.0 | WebSocket 101 metrics change `request_type` from `traditional_http` to `websocket`; overview queries do not filter that label. Control health's empty response changes from object to array; our probe checks HTTP status only. Standalone parser validation/logging hardens; API-driven digest/wait updates do not change file-driven `#END` reloads. OIDC introspection issuer allowlists tighten (unused in this session flow). Upstream TLS verification changes do not affect current HTTP upstreams. AI streaming fixes and multi-provider fallback changes are outside this nonstreaming single-provider configuration. |
+
+File-driven data-plane YAML, disabled Admin API, one modular host Go API, host
+Vite, Keycloak sessions and the internal authenticated AI route remain intact.
+There is no etcd or API-driven configuration migration. Rewrite priorities remain
+13000 → 12015 → 2599 → 1008. The health command still uses the image's `resty`
+and `resty.http` against the internal control listener.
+
+Metric review: `apisix_http_status` remains a counter with `code`, route/template,
+service/consumer/node, request/model metadata, and now `response_source` labels.
+`apisix_http_latency` remains a classic cumulative histogram in **milliseconds**,
+with `type=request|upstream|apisix`, finite buckets
+`1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,30000,60000` and +Inf/count/sum.
+The Lua client creates only buckets incremented by observations: lower zero
+buckets can be absent, rather than emitted as zero. Live checks therefore verify
+that exported boundaries belong to the configured set, counts are cumulative,
++Inf equals count and duration sums are positive. Quantiles interpolate from
+zero to the first present bucket when lower buckets are absent; this reinforces
+the coarse-estimate limitation. The overview aggregates away added labels and
+uses `type=request`, so no dashboard
+query changes were required. Go histograms remain in **seconds**. New LLM metrics
+are deliberately discarded; their new `type=total|ttft` label does not enter the
+overview. These findings were checked against the pinned exporter source and
+isolated live exposition/dashboard queries.
+
+### Rollback without deleting data
+
+Before upgrading an existing environment, save copies of `compose.yaml`,
+`infra/apisix/config.yaml`, `infra/apisix/apisix.yaml`, `ai-guard.lua` and
+`healthcheck.lua` from the working 3.14.1 revision outside Git. Preserve `.env`
+and all database/monitoring volumes. To roll back, restore those gateway files
+and the previous `apache/apisix:3.14.1-debian` pin together (including the previous
+nested session cookie configuration), then run:
+
+```sh
+docker compose config --quiet
+docker compose up -d --no-deps --force-recreate --wait apisix
+docker compose exec -T apisix apisix test
+docker compose exec -T apisix resty -I /usr/local/apisix/deps/share/lua/5.1 /usr/local/apisix/healthcheck.lua
+```
+
+Do not run `down -v`, delete databases, reimport the Keycloak realm, rotate
+secrets, or recreate unrelated services. Expect a brief gateway interruption and
+fresh browser sign-in because session-library cookie formats differ. No data
+migration is involved. Rollback itself has not been exercised against developer
+services.
+
+## Local alert rules
+
+The optional profile mounts committed `infra/observability/rules/cartside.yaml`
+read-only. **Prometheus**, not Grafana, evaluates these rules every 15 seconds.
+There is no Alertmanager, email, Slack, or other notification delivery. These are
+local demonstration thresholds, **not production SLOs**:
+
+| Alert | Condition (5m window for traffic) | Continuous `for` |
+| --- | --- | --- |
+| `CartsideAPITargetDown` | Expected `cartside-api` job's `up` is 0 or entirely absent | 1m |
+| `CartsideGatewayTargetDown` | Expected `cartside-gateway` job's `up` is 0 or entirely absent | 1m |
+| `CartsideAPIHighErrorRatio` | Per-route 5xx ratio >10%, at least 20 completions | 2m |
+| `CartsideAPIHighLatency` | Per-route classic-histogram p95 >1 second, at least 20 observations | 2m |
+| `CartsideAssistantProviderFailures` | Provider/transport failure ratio >20%, at least 20 eligible outbound calls | 2m |
+
+The traffic guards use extrapolated `increase(...[5m])`, rather than exact event
+counts. Ratios use counter `rate` before aggregation to handle resets. Latency
+sums cumulative bucket rates by `le,route` and uses the matching histogram count
+for its guard. API signals exclude `/health/.*` and `/metrics`; the separate
+metrics listener is not instrumented as customer traffic in the first place.
+Only API `status="5xx"` contributes server failures; 4xx validation/authentication
+responses do not. Targets use scrape-generated `up`, independent of customer
+traffic, so idle/no histogram data is not a scrape failure.
+
+Assistant eligible outcomes are `success`, `timeout`, `provider_unavailable` and
+`invalid_provider_output`; the latter three are failures. Both numerator and
+denominator exclude `cancelled`, `rate_limited`, `request_rejected`,
+`invalid_input`, and `payload_too_large`. Rejected internal HTTP 4xx responses
+(except 408 timeout and 429 rate limiting) now produce the bounded telemetry
+outcome `request_rejected`; the existing public error response is unchanged.
+Ordinary public API authentication failures never make an outbound call. Rate
+limiting remains visible separately by outcome in panels 7/8; it is not a provider
+outage and has no alert in this milestone. Size errors remain ambiguous
+(input/output), so are intentionally excluded. This mock-only metric cannot
+attribute an unavailable response to the gateway versus the provider; use logs.
+
+Alert labels contain only fixed severity/job values and, for API symptoms, bounded
+route templates. There are no identities, prompts, credentials, or request IDs.
+Annotations link to relevant overview panels (scrape health 1, API errors 3,
+API p95 5, assistant outcomes 8) with investigation steps. Use response
+`X-Request-ID` values to correlate safe logs as described above, never as labels.
+Dashboard links assume the documented local Grafana port 3000; adjust the URL
+manually when using an isolated/custom port.
+
+Expected target rules assume the two committed **single-target** jobs. If a job
+is accidentally removed while Prometheus still runs, `absent(up{job=...})`
+alerts. A failed configured scrape produces `up=0`. Starting monitoring while
+Go metrics are disabled deliberately alerts: start Go with `METRICS_ADDR` or stop
+the optional profile. Stopping Prometheus means no rule evaluator runs and no
+new alert state is produced. This is normal optional monitoring shutdown, not an
+absent-target signal. This local stack cannot detect its own complete monitoring
+outage, and missing-series alerts cannot enumerate missing instances if the jobs
+are later scaled. Do not treat old Grafana data as current evaluator state.
+
+With the temporary loopback Prometheus port override described above, inspect:
+
+- `http://localhost:9090/alerts`: inactive, pending and firing rules.
+- `http://localhost:9090/query`: `ALERTS{alertstate="pending"}` or
+  `ALERTS{alertstate="firing"}` (only active states produce series).
+- `/api/v1/alerts` for active alerts; `/api/v1/rules` for rule health and state;
+  `/targets` for scrape diagnostics.
+
+A condition starts pending on its first matching evaluation, becomes firing only
+after its `for` duration, and clears on the first nonmatching evaluation. Traffic
+alerts may take the 5m window to drain after recovery. All rules use the committed
+durations without shortened runtime-test variants. No traffic alone produces no
+traffic alert, even when a quantile is absent/NaN. Scrape alerts cover the separate
+availability boundary. There is no production SLO, tracing, real-provider
+verification, notification delivery, or external monitoring service here.
+
+### Alert validation and isolated demonstration
+
+With the Python dependencies installed, run from the repository root:
+
+```sh
+python scripts/validate-config.py
+python scripts/verify-alerts.py
+python scripts/verify-observability.py --browser
+```
+
+`verify-alerts.py` uses the Compose-pinned Prometheus image, a read-only config
+mount, no network, and disposable `docker run --rm` containers. It executes
+`promtool check config`, `promtool check rules`, and `promtool test rules` on the
+committed files. It also runs in the configuration CI job. The rule unit fixture
+is `infra/observability/alerts.test.yaml`; it uses synthetic counters and classic
+buckets to demonstrate healthy, idle, no-data, low-traffic, sustained failures,
+`for` durations, recovery, resets, target-down/absence, and excluded outcomes.
+The representative slow histogram quantile is 1.95 seconds; fuzzy floating-point
+comparison handles the final rounding bit. Both fast and slow bucket distributions
+and matching observation guards are exercised.
+
+The integrated runner uses random project names, ephemeral host ports and private
+temporary credentials, never `.env` or developer volumes. It validates Prometheus
+configuration and all five loaded rule health states, checks every Grafana query
+and authenticated provisioning, and optionally renders Grafana in Chromium. After
+the dashboard checks it stops only its own APISIX, observes the committed target
+alert pending then firing after 1m, starts that gateway again and verifies UP and
+alert recovery. The Go transport fixture allows eight minutes for this longer
+exercise. It removes only its disposable resources afterward. Other symptom
+alerts are demonstrated deterministically in promtool rather than by generating
+minutes of artificial shopping failures.
+
+### Verification record — 2026-10-24
+
+Upgrade regression gate completed **before** alert implementation: tracked
+JSON/YAML parsing; isolated Compose validation/startup and `apisix test`; stock
+image `resty` control health; `verify-ai.py` authentication, restrictions,
+request-ID correlation/concurrency, safe logs, malformed output, 429/500 errors,
+bounded delay timeout and single-invocation/no-retry checks;
+`verify-observability.py --browser` with both targets UP, every dashboard query,
+Grafana provisioning/login/rendering and sensitive exposition checks; and
+`scripts/e2e.py` with all six PostgreSQL integration suites under the race detector
+and all five Chromium shopping tests. The browser suite exercised login/logout,
+API authentication, CSRF, catalog/cart, checkout conflicts/replay and explicit
+assistant acceptance, plus authenticated correlation and safe-log assertions.
+
+After adding alerts, `verify-alerts.py` passed `promtool check config`, five-rule
+`check rules` and all **27** rule-test scenarios. Go formatting, vet, unit tests,
+race tests and build passed. With Node **24.15.0** (installed outside the repo),
+frontend lint, application/E2E type-check, **86** unit tests and build passed.
+The full database/browser suite passed again, including the added assertion that
+an authenticated Vite WebSocket through APISIX received its `connected` frame.
+Python scripts compile, infrastructure/CI YAML including new files parses, and
+`git diff --check` passes. Configuration CI now includes the promtool checks.
+
+The integrated alert demonstration passed: all five loaded rules healthy, the
+isolated APISIX target alert observed pending, then firing with the committed
+1m duration, then absent from active alerts after gateway recovery. All dashboard
+queries/provisioning and Chromium Grafana rendering passed with alert rules loaded.
+The final monitoring rerun also passed the explicit APISIX bucket-boundary,
+cumulative count/+Inf, positive duration-sum and `response_source` label checks.
+An initial over-strict test expected zero buckets to be exported; inspecting the
+image source and live exposition established the sparse behavior, and the test
+was corrected before the final successful run.
+Developer services and named volumes were preserved; runners removed only their
+randomly named resources. No commit, push or deployment was performed.
+
+Intentional verification limits: Chromium only; WebSocket connection/frames were
+checked, but no visible source-edit HMR cycle was performed. Passive hour-long
+session expiry, cookie interoperability across versions, and rollback execution
+were not exercised. Mock provider only, no production traffic/SLO or notification
+validation. Existing documentation's historical milestone records remain dated
+records, not claims of additional checks in this run.

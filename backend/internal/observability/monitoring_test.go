@@ -47,7 +47,7 @@ func TestMonitoringStack(t *testing.T) {
 		defer s.Shutdown(context.Background())
 	}
 	os.WriteFile(filepath.Join(folder, "ready"), []byte("ready"), 0600)
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(8 * time.Minute)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(filepath.Join(folder, "stop")); err == nil {
 			return

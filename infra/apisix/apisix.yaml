@@ -148,12 +148,11 @@ routes:
       set_refresh_token_header: false
       session:
         secret: $ENV://CARTSIDE_SESSION_SECRET
-        cookie:
-          path: /
-          httponly: true
-          samesite: Lax
-          secure: false # Local HTTP only; require true with deployment HTTPS.
-          lifetime: 3600
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: false # Local HTTP only; require true with deployment HTTPS.
+        absolute_timeout: 3600
       session_contents:
         id_token: true
         access_token: true
@@ -217,12 +216,11 @@ routes:
       set_refresh_token_header: false
       session:
         secret: $ENV://CARTSIDE_SESSION_SECRET
-        cookie:
-          path: /
-          httponly: true
-          samesite: Lax
-          secure: false # Local HTTP only; require true with deployment HTTPS.
-          lifetime: 3600
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: false # Local HTTP only; require true with deployment HTTPS.
+        absolute_timeout: 3600
       session_contents:
         id_token: true
         access_token: true
@@ -277,12 +275,11 @@ routes:
       set_refresh_token_header: false
       session:
         secret: $ENV://CARTSIDE_SESSION_SECRET
-        cookie:
-          path: /
-          httponly: true
-          samesite: Lax
-          secure: false # Local HTTP only; require true with deployment HTTPS.
-          lifetime: 3600
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: false # Local HTTP only; require true with deployment HTTPS.
+        absolute_timeout: 3600
       session_contents:
         id_token: true
         access_token: true
@@ -341,12 +338,11 @@ routes:
       set_refresh_token_header: false
       session:
         secret: $ENV://CARTSIDE_SESSION_SECRET
-        cookie:
-          path: /
-          httponly: true
-          samesite: Lax
-          secure: false # Local HTTP only; require true with deployment HTTPS.
-          lifetime: 3600
+        cookie_path: /
+        cookie_http_only: true
+        cookie_same_site: Lax
+        cookie_secure: false # Local HTTP only; require true with deployment HTTPS.
+        absolute_timeout: 3600
       session_contents:
         id_token: true
         access_token: true

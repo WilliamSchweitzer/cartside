@@ -91,6 +91,19 @@ def main():
    assert 'apisix_http_status' in gateway_exposition
    assert 'matched_uri="/api/health/live"' in gateway_exposition
    assert 'route="internal-ai"' in gateway_exposition
+   # Validate the upgraded exporter's classic, cumulative millisecond buckets.
+   buckets=query('sum by (le) (apisix_http_latency_bucket{type="request",route="internal-ai"})')
+   observed=sorted((float(x['metric']['le']),float(x['value'][1])) for x in buckets)
+   # The Lua client creates only buckets incremented by an observation;
+   # lower zero buckets may be absent rather than exported as zero.
+   expected=[1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,30000,60000,float('inf')]
+   assert observed and all(bound in expected for bound,_ in observed), observed
+   assert [bound for bound,_ in observed][-2:]==[60000,float('inf')]
+   counts=[count for _,count in observed]
+   assert counts==sorted(counts) and counts[-1]>=2
+   assert counts[-1]==float(query('sum(apisix_http_latency_count{type="request",route="internal-ai"})')[0]['value'][1])
+   assert float(query('sum(apisix_http_latency_sum{type="request",route="internal-ai"})')[0]['value'][1])>0
+   assert 'response_source=' in gateway_exposition
    assert query('cartside_assistant_calls_total{outcome="success"}')[0]['value'][1]=='1'
    assert query('cartside_assistant_calls_total{outcome="provider_unavailable"}')[0]['value'][1]=='1'
    assert query('cartside_assistant_call_duration_seconds_count{outcome="provider_unavailable"}')[0]['value'][1]=='1'
@@ -106,10 +119,26 @@ def main():
    provisioned=json.loads(get(f'http://127.0.0.1:{grafana}/api/dashboards/uid/cartside-overview',headers=auth))
    assert provisioned['dashboard']['uid']=='cartside-overview'
    print('PASS: both targets UP; ordinary/success/failure traffic; all dashboard queries return series; Grafana provisioning/auth; sensitive exposition fixtures absent.',flush=True)
+   rules=json.loads(get(base+'/api/v1/rules'))['data']['groups']
+   assert sum(len(group['rules']) for group in rules)==5
+   assert all(rule['health']=='ok' for group in rules for rule in group['rules'])
    if '--browser' in sys.argv:
     subprocess.run(['node',str(ROOT/'scripts/verify-grafana.mjs')],env=dict(env,GRAFANA_TEST_URL=f'http://127.0.0.1:{grafana}',GRAFANA_TEST_PASSWORD=password),check=True)
    else:
     print('Browser rendering not checked; pass --browser to check with installed Playwright/Chromium.')
+   # Stop only this runner's APISIX: exercise the committed 1m rule unchanged.
+   run(['stop','apisix'])
+   def alert_state(state):
+    alerts=json.loads(get(base+'/api/v1/alerts'))['data']['alerts']
+    return any(a['labels']['alertname']=='CartsideGatewayTargetDown' and a['state']==state for a in alerts)
+   wait(lambda:alert_state('pending'))
+   print('PASS: isolated gateway scrape alert pending',flush=True)
+   wait(lambda:alert_state('firing'))
+   print('PASS: isolated gateway scrape alert firing after committed 1m duration',flush=True)
+   run(['start','apisix'])
+   wait(lambda:bool(query('up{job="cartside-gateway"} == 1')))
+   wait(lambda:not alert_state('pending') and not alert_state('firing'))
+   print('PASS: isolated gateway scrape alert recovered; all five rules healthy',flush=True)
   finally:
    (folder/'stop').touch()
    if fixture:

@@ -26,6 +26,13 @@ func TestOutboundCorrelationAndSafeOutcomes(t *testing.T) {
 	}{
 		{name: "malformed", status: 200, body: "secret-model-output", want: string(InvalidOutput)},
 		{name: "rate-limit", status: 429, body: "secret-provider-error", want: string(RateLimited)},
+		{name: "rejected-400", status: 400, body: "secret-provider-error", want: "request_rejected"},
+		{name: "rejected-401", status: 401, body: "secret-provider-error", want: "request_rejected"},
+		{name: "rejected-403", status: 403, body: "secret-provider-error", want: "request_rejected"},
+		{name: "rejected-404", status: 404, body: "secret-provider-error", want: "request_rejected"},
+		{name: "rejected-413", status: 413, body: "secret-provider-error", want: "request_rejected"},
+		{name: "upstream-timeout", status: 408, want: string(Timeout)},
+		{name: "gateway-timeout", status: 504, want: string(Timeout)},
 		{name: "failure", status: 500, body: "secret-provider-error", want: string(Unavailable)},
 		{name: "timeout", timeout: true, want: string(Timeout)},
 		{name: "cancel", cancel: true, want: "cancelled"},

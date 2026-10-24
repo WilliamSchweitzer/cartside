@@ -65,6 +65,11 @@ func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (result a
 		} else if resultErr != nil {
 			outcome = "provider_unavailable"
 		}
+		// A rejected internal request is not a provider/transport outage.
+		// Keep the existing public error contract while separating telemetry.
+		if status >= 400 && status < 500 && status != 408 && status != 429 {
+			outcome = "request_rejected"
+		}
 		if transportCancelled {
 			outcome = "cancelled"
 		}
