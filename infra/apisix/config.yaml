@@ -22,12 +22,25 @@ nginx_config:
     - CARTSIDE_SESSION_SECRET
   # OIDC errors and default access logs can include codes/provider responses.
   error_log_level: crit
+  http_configuration_snippet: |
+    map $request_uri $cartside_route {
+      default frontend;
+      ~^/auth(?:/|\?|$) authentication;
+      ~^/api/health/(?:live|ready)(?:\?|$) health;
+      ~^/api(?:/|\?|$) backend;
+      ~^/internal/ai/chat/completions(?:\?|$) internal-ai;
+      ~^/internal(?:/|\?|$) internal-deny;
+    }
   http:
-    enable_access_log: false
+    enable_access_log: true
+    access_log: /dev/stdout
+    access_log_format_escape: json
+    access_log_format: '{"event":"gateway_request_completed","request_id":"$sent_http_x_request_id","method":"$request_method","route":"$cartside_route","status":$status,"upstream_status":"$upstream_status","duration_s":$request_time}'
 
 plugins:
   # ai-proxy 3.14.1 invokes Prometheus LLM counters even without route metrics.
   - prometheus
+  - request-id
   - ai-proxy
   - proxy-rewrite
   - openid-connect

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/WilliamSchweitzer/cartside/backend/internal/auth"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -26,6 +27,7 @@ func NewRouterWithAssistant(checkReady func(context.Context) error, authenticate
 
 func newRouter(checkReady func(context.Context) error, authenticate func(http.Handler) http.Handler, catalog Catalog, csrf CSRF, checkout Checkout, assistant Assistant, limiter *AssistantLimiter, carts ...Cart) http.Handler {
 	r := chi.NewRouter()
+	r.Use(observability.Middleware("api", observability.ChiRoute))
 	r.Use(func(next http.Handler) http.Handler {
 		protected := authenticate(csrf.Middleware(next))
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

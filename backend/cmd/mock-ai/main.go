@@ -7,7 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,8 +18,10 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("process_failed", "error_category", "startup_or_server_failure")
+		os.Exit(1)
 	}
 }
 func run() error {
@@ -46,12 +48,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	result := make(chan error, 1)
-	go func() { result <- s.ListenAndServe() }()
+	go func() { slog.Info("server_starting", "component", "mock"); result <- s.ListenAndServe() }()
 	select {
 	case err := <-result:
 		return err
 	case <-ctx.Done():
 	}
+	slog.Info("server_stopping", "component", "mock")
 	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.Shutdown(deadline); err != nil {
@@ -60,5 +63,6 @@ func run() error {
 	if err := <-result; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	slog.Info("server_stopped", "component", "mock")
 	return nil
 }

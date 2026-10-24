@@ -7,18 +7,37 @@ routes:
   uris: [/internal, /internal/*]
   priority: 40
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() return ngx.exit(404) end
+      - return function() ngx.req.clear_header("X-Request-ID"); return ngx.exit(404) end
 - id: internal-ai
   uri: /internal/ai/chat/completions
   priority: 50
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
       - return dofile("/usr/local/apisix/ai-guard.lua")
+    serverless-post-function:
+      _meta:
+        priority: 13000
+      phase: before_proxy
+      functions:
+      - return function(conf, ctx) local core = require("apisix.core"); local instance = core.table.deepcopy(ctx.picked_ai_instance);
+        instance.auth.header["X-Request-ID"] = core.request.header(ctx, "X-Request-ID"); ctx.picked_ai_instance = instance end
     ai-proxy:
       provider: openai-compatible
       auth:
@@ -40,10 +59,16 @@ routes:
   uri: /signed-out
   priority: 30
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() ngx.header["Content-Type"] = "text/html; charset=utf-8"; ngx.header["Cache-Control"] = "no-store";
+      - return function() ngx.req.clear_header("X-Request-ID"); ngx.header["Content-Type"] = "text/html; charset=utf-8"; ngx.header["Cache-Control"] = "no-store";
         ngx.say([[<!doctype html><html lang="en"><meta charset="utf-8"><title>Cartside signed out</title><main><h1>You are
         signed out</h1><a href="/">Sign in to Cartside</a></main></html>]]); return ngx.exit(200) end
 # Only these exact API paths bypass authentication.
@@ -53,6 +78,16 @@ routes:
   - /api/health/ready
   priority: 30
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
+    serverless-pre-function:
+      _meta:
+        priority: 13000
+      phase: rewrite
+      functions:
+      - return function() ngx.req.clear_header("X-Request-ID") end
     proxy-rewrite:
       regex_uri:
       - ^/api/(.*)
@@ -83,6 +118,10 @@ routes:
   priority: -10
   enable_websocket: true
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     openid-connect:
       client_id: cartside-apisix
       client_secret: $ENV://CARTSIDE_OIDC_CLIENT_SECRET
@@ -116,9 +155,11 @@ routes:
         user: false
         enc_id_token: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
         "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
     proxy-rewrite:
       headers:
@@ -139,10 +180,16 @@ routes:
   uri: /auth/session
   priority: 30
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
         "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
     openid-connect:
       client_id: cartside-apisix
@@ -181,7 +228,10 @@ routes:
       functions:
       - return function() ngx.header["Content-Type"] = "application/json"; ngx.header["Cache-Control"] = "no-store"; ngx.say([[{"authenticated":true}]]);
         return ngx.exit(200) end
-# Rewrite phase priorities: pre-function 10000 > OIDC 2599 > proxy-rewrite 1008.
+# Rewrite priorities: pre-function override 13000 > request-id 12015 >
+# OIDC 2599 > proxy-rewrite 1008. Browser IDs are cleared before generation.
+# Internal AI authenticates and validates IDs at 13000; before_proxy clones its
+# provider configuration per request because ai-proxy forwards configured headers.
 # Sanitization precedes OIDC; proxy-rewrite removes only Cookie, preserving the
 # session-generated X-Access-Token. No token is forwarded to Vite or responses.
 # Preserve browser Origin, X-CSRF-Protection, Sec-Fetch-Site, and Idempotency-Key unchanged.
@@ -190,10 +240,16 @@ routes:
 - id: backend
   priority: 10
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
         "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
     openid-connect:
       client_id: cartside-apisix
@@ -248,10 +304,16 @@ routes:
 - id: backend-root
   priority: 10
   plugins:
+    request-id:
+      header_name: X-Request-ID
+      algorithm: uuid
+      include_in_response: true
     serverless-pre-function:
+      _meta:
+        priority: 13000
       phase: rewrite
       functions:
-      - return function() for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
+      - return function() ngx.req.clear_header("X-Request-ID"); for _, h in ipairs({"Authorization", "X-Access-Token", "X-ID-Token", "X-Userinfo", "X-Refresh-Token",
         "X-User-ID", "X-Forwarded-User"}) do ngx.req.clear_header(h) end end
     openid-connect:
       client_id: cartside-apisix

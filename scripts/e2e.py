@@ -25,6 +25,7 @@ def main():
     import yaml  # scripts/requirements-ci.txt
     project = 'cartside-e2e-' + secrets.token_hex(6)
     children = []
+    api_log_handle = None
     # Temp directory and every secret-bearing file are private; no artifacts survive.
     with tempfile.TemporaryDirectory(prefix=project) as tmp:
         folder = Path(tmp)
@@ -53,8 +54,9 @@ def main():
         routes = (ROOT / 'infra/apisix/apisix.yaml').read_text().replace('http://localhost:9080', origin).replace('host.docker.internal:8080', f'host.docker.internal:{api}').replace('host.docker.internal:5173', f'host.docker.internal:{vite}')
         (folder / 'apisix.yaml').write_text(routes)
         compose = yaml.safe_load((ROOT / 'compose.yaml').read_text())
-        for service in compose['services'].values():
-            service['logging'] = {'driver': 'none'}
+        for name, service in compose['services'].items():
+            if name not in ('apisix', 'mock-ai'):
+                service['logging'] = {'driver': 'none'}
             service['volumes'] = [str(ROOT / volume[2:]) if volume.startswith('./') else volume for volume in service.get('volumes', [])]
         services = compose['services']
         services['mock-ai']['build']['context'] = str(ROOT)
@@ -87,8 +89,11 @@ def main():
             run(['go', 'run', './cmd/migrate', 'up'], ROOT/'backend')
             run(['go', 'run', './cmd/seed'], ROOT/'backend')
             run(['go', 'build', '-o', str(folder/'api'), './cmd/api'], ROOT/'backend')
+            api_logs = folder/'api.jsonl'
+            api_log_handle = api_logs.open('w')
+            api_logs.chmod(0o600)
             for args, cwd in [([str(folder/'api')], ROOT/'backend'), (['npm', 'run', 'dev', '--', '--port', str(vite)], ROOT/'frontend')]:
-                children.append(subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
+                children.append(subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=api_log_handle if cwd == ROOT/'backend' else subprocess.DEVNULL, start_new_session=True))
             deadline = time.monotonic() + 60
             while True:
                 if any(child.poll() is not None for child in children):
@@ -122,6 +127,43 @@ def main():
             stats = subprocess.check_output(command + ['exec', '-T', 'mock-ai', '/mock-ai', '-probe', 'http://127.0.0.1:8090/test/stats'], env=env, stderr=subprocess.DEVNULL)
             if json.loads(stats)['calls'] != 2:
                 raise RuntimeError('Unexpected provider invocation count')
+            time.sleep(3.2)  # Flush buffered gateway access events.
+            gateway_logs = subprocess.check_output(command + ['logs', '--no-log-prefix', 'apisix', 'mock-ai'],
+                                                   env=env, stderr=subprocess.DEVNULL, text=True)
+            api_text = api_logs.read_text()
+            def events(text):
+                result = []
+                for line in text.splitlines():
+                    try:
+                        result.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+                return result
+            api_events, infrastructure_events = events(api_text), events(gateway_logs)
+            outbound = [e for e in api_events if e.get('msg') == 'assistant_call_completed']
+            if len(outbound) != 2:
+                raise RuntimeError('Expected two correlated outbound assistant events')
+            for call in outbound:
+                request_id = call['request_id']
+                matched = [e for e in infrastructure_events if e.get('request_id') == request_id]
+                if (call.get('outcome') != 'success' or
+                    sum(e.get('event') == 'gateway_request_completed' for e in matched) != 2 or
+                    sum(e.get('component') == 'mock' for e in matched) != 1 or
+                    not any(e.get('request_id') == request_id and e.get('route') == '/assistant/messages' for e in api_events)):
+                    raise RuntimeError('Authenticated assistant correlation mismatch')
+            if not any(e.get('route') == '/products' and e.get('status') == 200 and
+                       any(g.get('request_id') == e.get('request_id') for g in infrastructure_events)
+                       for e in api_events):
+                raise RuntimeError('Ordinary catalog request correlation mismatch')
+            sensitive = [env[name] for name in ('POSTGRES_PASSWORD', 'CARTSIDE_AI_SERVICE_KEY',
+                         'CARTSIDE_OIDC_CLIENT_SECRET', 'CARTSIDE_SESSION_SECRET')]
+            sensitive += [u[field] for u in users for field in ('username', 'password')]
+            sensitive += ['breakfast for two', 'vegetarian dinner', 'snacks for a picnic',
+                          'Bearer cartside-local-fake-provider-only']
+            if any(value in api_text + gateway_logs for value in sensitive):
+                raise RuntimeError('Sensitive fixture appeared in application/infrastructure logs')
+            print('Authenticated browser/catalog/assistant correlation and log redaction passed', flush=True)
+            api_log_handle.close()
             print('Browser suite passed; public assistant traversed both APISIX paths, internal session-only request denied', flush=True)
         finally:
             for child in children:
@@ -132,6 +174,8 @@ def main():
                     except subprocess.TimeoutExpired:
                         os.killpg(child.pid, signal.SIGKILL)
                         child.wait()
+            if api_log_handle is not None:
+                api_log_handle.close()
             # Only this randomly named project's volumes are removed.
             subprocess.run(command + ['down', '-v', '--remove-orphans'], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

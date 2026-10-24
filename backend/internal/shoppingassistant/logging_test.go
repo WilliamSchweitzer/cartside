@@ -1,0 +1,75 @@
+package shoppingassistant
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/WilliamSchweitzer/cartside/backend/internal/aiprotocol"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
+)
+
+func TestOutboundCorrelationAndSafeOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		cancel  bool
+		timeout bool
+		want    string
+	}{
+		{name: "malformed", status: 200, body: "secret-model-output", want: string(InvalidOutput)},
+		{name: "rate-limit", status: 429, body: "secret-provider-error", want: string(RateLimited)},
+		{name: "failure", status: 500, body: "secret-provider-error", want: string(Unavailable)},
+		{name: "timeout", timeout: true, want: string(Timeout)},
+		{name: "cancel", cancel: true, want: "cancelled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			old := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer slog.SetDefault(old)
+			c := clientFor(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get(observability.Header) != "correlation-test" {
+					t.Error("missing ID")
+				}
+				if tc.timeout {
+					time.Sleep(60 * time.Millisecond)
+					return
+				}
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			ctx := observability.WithID(context.Background(), "correlation-test")
+			if tc.cancel {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			if tc.timeout {
+				c.http.Timeout = 20 * time.Millisecond
+			}
+			_, err := c.Complete(ctx, aiprotocol.Input{Version: 1, Scenario: "secret-prompt", Candidates: []aiprotocol.Candidate{}})
+			if err == nil {
+				t.Fatal("expected failure")
+			}
+			var event map[string]any
+			if json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &event) != nil {
+				t.Fatalf("expected one JSON event: %s", logs.String())
+			}
+			if event["request_id"] != "correlation-test" || event["outcome"] != tc.want {
+				t.Fatal(event)
+			}
+			for _, secret := range []string{"secret-prompt", "secret-model-output", "secret-provider-error", strings.Repeat("s", 32), "http://"} {
+				if strings.Contains(logs.String(), secret) {
+					t.Fatal("sensitive log")
+				}
+			}
+		})
+	}
+}

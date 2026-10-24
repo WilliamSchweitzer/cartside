@@ -11,3 +11,5 @@
 !backend/internal/mockai/**
 !backend/internal/aiprotocol/
 !backend/internal/aiprotocol/**
+!backend/internal/observability/
+!backend/internal/observability/**

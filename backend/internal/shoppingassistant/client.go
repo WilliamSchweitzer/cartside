@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/WilliamSchweitzer/cartside/backend/internal/aiprotocol"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
 )
 
 type ErrorCode string
@@ -46,7 +48,23 @@ func NewClient(endpoint, credential string) (*Client, error) {
 	}
 	return &Client{endpoint: endpoint, credential: credential, http: &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true, ResponseHeaderTimeout: 2 * time.Second, MaxResponseHeaderBytes: 4096}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
-func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (aiprotocol.Output, error) {
+func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (result aiprotocol.Output, resultErr error) {
+	start := time.Now()
+	status := 0
+	transportCancelled := false
+	defer func() {
+		outcome := "success"
+		var failure *Error
+		if errors.As(resultErr, &failure) {
+			outcome = string(failure.Code)
+		} else if resultErr != nil {
+			outcome = "provider_unavailable"
+		}
+		if transportCancelled {
+			outcome = "cancelled"
+		}
+		slog.InfoContext(ctx, "assistant_call_completed", "request_id", observability.ID(ctx), "operation", "shopping_completion", "provider", "mock", "duration_ms", float64(time.Since(start).Microseconds())/1000, "status", status, "outcome", outcome)
+	}()
 	var out aiprotocol.Output
 	content, e := json.Marshal(input)
 	if e != nil {
@@ -70,15 +88,18 @@ func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (aiprotoc
 	if e != nil {
 		return out, failure(InvalidInput)
 	}
+	req.Header.Set(observability.Header, observability.ID(ctx))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Cartside-AI-Key", c.credential)
 	res, e := c.http.Do(req)
 	if e != nil {
+		transportCancelled = errors.Is(e, context.Canceled)
 		if errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
 			return out, failure(Timeout)
 		}
 		return out, failure(Unavailable)
 	}
+	status = res.StatusCode
 	defer res.Body.Close()
 	if res.StatusCode == 429 {
 		return out, failure(RateLimited)
@@ -91,6 +112,7 @@ func (c *Client) Complete(ctx context.Context, input aiprotocol.Input) (aiprotoc
 	}
 	b, e := io.ReadAll(io.LimitReader(res.Body, aiprotocol.MaxResponseBytes+1))
 	if e != nil {
+		transportCancelled = errors.Is(e, context.Canceled)
 		if errors.Is(e, context.DeadlineExceeded) || ctx.Err() != nil {
 			return out, failure(Timeout)
 		}

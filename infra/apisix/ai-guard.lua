@@ -5,6 +5,10 @@ return function()
     if not key or #key < 32 or key:find("^replace_with_") or supplied ~= key then
         return ngx.exit(401)
     end
+    local id = ngx.req.get_headers()["X-Request-ID"]
+    if type(id) ~= "string" or #id < 1 or #id > 64 or id:find("[^A-Za-z0-9_-]") then
+        ngx.req.clear_header("X-Request-ID")
+    end
     ngx.req.clear_header("X-Cartside-AI-Key")
     ngx.req.clear_header("Authorization")
     ngx.req.clear_header("Cookie")

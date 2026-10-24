@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,8 +19,10 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("process_failed", "error_category", "startup_or_server_failure")
+		os.Exit(1)
 	}
 }
 
@@ -64,7 +66,7 @@ func run() error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Printf("starting HTTP server on %s", addr)
+		slog.Info("server_starting", "component", "api")
 		serverErr <- server.ListenAndServe()
 	}()
 
@@ -75,7 +77,7 @@ func run() error {
 		stop() // Restore default signal behavior so a second signal can force exit.
 	}
 
-	log.Print("shutting down HTTP server")
+	slog.Info("server_stopping", "component", "api")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -85,6 +87,6 @@ func run() error {
 	if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	log.Print("HTTP server stopped")
+	slog.Info("server_stopped", "component", "api")
 	return nil
 }

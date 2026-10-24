@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Disposable AI gateway verification. Never reads .env or uses developer volumes."""
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -34,8 +35,18 @@ def main():
         services['apisix']['volumes'] = [str(ROOT/v[2:]) for v in services['apisix']['volumes']]
         services['mock-ai']['build']['context'] = str(ROOT)
         services['mock-ai']['environment'] = dict(MOCK_TEST_MODE='1', MOCK_SCENARIO='normal')
-        for service in services.values():
-            service['logging'] = {'driver': 'none'}
+        # Keep disposable logs available for correlation and redaction assertions.
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            api_port = sock.getsockname()[1]
+        routes = yaml.safe_load((ROOT/'infra/apisix/apisix.yaml').read_text())
+        health = next(r for r in routes['routes'] if r['id'] == 'health')
+        health['uris'].append('/api/assistant/messages')
+        health['upstream']['nodes'] = {f'host.docker.internal:{api_port}': 1}
+        route_file = folder/'routes.yaml'
+        route_file.write_text(yaml.safe_dump(routes) + '\n#END\n')
+        route_file.chmod(0o600)
+        services['apisix']['volumes'][1] = f'{route_file}:/usr/local/apisix/conf/apisix.yaml:ro'
         config = folder/'compose.json'
         config.write_text(json.dumps(compose)); config.chmod(0o600)
         command = ['docker', 'compose', '--env-file', '/dev/null', '-p', project, '-f', str(config)]
@@ -43,14 +54,67 @@ def main():
         def run(args, capture=False):
             result = subprocess.run(command+args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if result.returncode:
-                # Never include secret-bearing configuration or payloads in failure output.
                 raise RuntimeError('Compose step failed: ' + ' '.join(args[:2]))
             return result.stdout if capture else None
 
         def calls():
             return json.loads(run(['exec', '-T', 'mock-ai', '/mock-ai', '-probe', 'http://127.0.0.1:8090/test/stats'], True))['calls']
 
+        def correlation(scenario):
+            result_file = folder/'correlation.json'
+            test_env = dict(env, CORRELATION_GATEWAY=f'http://127.0.0.1:{port}',
+                            CORRELATION_SERVICE_KEY=key, CORRELATION_API_PORT=str(api_port),
+                            CORRELATION_RESULT=str(result_file), CORRELATION_SCENARIO=scenario)
+            result = subprocess.run(['go', 'test', './internal/observability', '-run', '^TestGatewayCorrelation$', '-count=1'],
+                                    cwd=ROOT/'backend', env=test_env, capture_output=True, text=True)
+            if result.returncode:
+                raise RuntimeError('Go gateway correlation fixture failed: ' + result.stdout)
+            evidence = json.loads(result_file.read_text())
+            time.sleep(3.2)  # Nginx access log flush interval.
+            logs = run(['logs', '--no-log-prefix', 'apisix', 'mock-ai'], True)
+            events = []
+            for line in logs.splitlines():
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+            ordinary, assistant = evidence['ids']
+            assert any(e.get('request_id') == ordinary and e.get('event') == 'gateway_request_completed' for e in events)
+            assert sum(e.get('request_id') == assistant and e.get('event') == 'gateway_request_completed' for e in events) == 2
+            assert any(e.get('request_id') == assistant and e.get('component') == 'mock' for e in events)
+            for secret in [key, 'session=must-be-stripped', 'browser-supplied-must-replace', 'breakfast for two', 'private-callback-code', 'private-callback-state']:
+                assert secret not in logs, 'Sensitive data appeared in gateway/mock logs'
+            print(f'{scenario}: matching gateway/Go/outbound/mock IDs; safe outcome verified', flush=True)
+
         body = dict(model='cartside-mock-v1', messages=[dict(role='user', content='breakfast for two')], stream=False)
+
+        def internal_ids():
+            supplied = ['internal-safe-id', 'bad/id', 'x'*512] + [f'concurrent-{i}' for i in range(12)]
+            def invoke(request_id):
+                req = urllib.request.Request(f'http://127.0.0.1:{port}/internal/ai/chat/completions',
+                    data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',
+                    'X-Cartside-AI-Key': key, 'X-Request-ID': request_id})
+                with urllib.request.urlopen(req, timeout=6) as response:
+                    response.read()
+                    actual = response.headers['X-Request-ID']
+                if request_id == 'bad/id' or len(request_id) > 64:
+                    assert actual != request_id and len(actual) == 36
+                else:
+                    assert actual == request_id
+                return actual
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                ids = list(executor.map(invoke, supplied))
+            time.sleep(3.2)
+            logs = run(['logs', '--no-log-prefix', 'apisix', 'mock-ai'], True)
+            events = []
+            for line in logs.splitlines():
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+            for request_id in ids:
+                assert sum(e.get('request_id') == request_id and e.get('component') == 'mock' for e in events) == 1
+            print('Authenticated ID validation and concurrent provider isolation passed', flush=True)
 
         def request(payload=body, credential=key, path='/internal/ai/chat/completions', method='POST', cookie=None):
             headers = {'Content-Type': 'application/json'}
@@ -108,6 +172,11 @@ def main():
             assert calls() == before+2
             print('Structured candidate-grounded scenario passed through APISIX', flush=True)
 
+            # A callback query must never be present in either access or error logs.
+            request(path='/auth/callback?code=private-callback-code&state=private-callback-state', method='GET', credential=None)
+            correlation('normal')
+            internal_ids()
+
             for scenario, expected in [('malformed', 200), ('rate-limit', 429), ('server-error', 500), ('delay', 504)]:
                 services['mock-ai']['environment']['MOCK_SCENARIO'] = scenario
                 config.write_text(json.dumps(compose))
@@ -128,6 +197,7 @@ def main():
                     assert .8 <= elapsed < 2.5, 'Timeout not bounded'
                 time.sleep(.2)
                 assert calls() == 1, f'{scenario}: retry detected'
+                correlation(scenario)
                 print(f'{scenario}: expected status, one provider invocation; elapsed {elapsed:.2f}s', flush=True)
             print('AI gateway verification passed (mock protocol only)', flush=True)
         finally:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/WilliamSchweitzer/cartside/backend/internal/aiprotocol"
+	"github.com/WilliamSchweitzer/cartside/backend/internal/observability"
 	"io"
 	"net/http"
 	"strings"
@@ -137,7 +138,13 @@ func New(testMode bool, scenario string) (http.Handler, error) {
 		// Usage is intentionally omitted: the pinned plugin accepts its absence.
 		writeJSON(w, map[string]any{"id": "chatcmpl-cartside-simulated", "object": "chat.completion", "created": 0, "model": Model, "choices": []any{map[string]any{"index": 0, "message": Message{Role: "assistant", Content: content}, "finish_reason": "stop"}}})
 	})
-	return mux, nil
+	return observability.Middleware("mock", func(r *http.Request) string {
+		switch r.Pattern {
+		case "GET /health", "GET /test/stats", "POST /v1/chat/completions":
+			return r.Pattern
+		}
+		return "unmatched"
+	})(mux), nil
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -4,6 +4,7 @@ COPY backend/go.mod backend/go.sum ./
 COPY backend/cmd/mock-ai ./cmd/mock-ai
 COPY backend/internal/mockai ./internal/mockai
 COPY backend/internal/aiprotocol ./internal/aiprotocol
+COPY backend/internal/observability ./internal/observability
 RUN CGO_ENABLED=0 go build -trimpath -o /mock-ai ./cmd/mock-ai
 
 FROM scratch
