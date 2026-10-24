@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { cartRequest, CartError, cartErrorMessage } from './cartApi'
 import type { Cart } from './cartApi'
 
+export type MutationResult = { outcome: 'not-started' } | { outcome: 'confirmed'; refreshed: boolean } | { outcome: 'rejected' | 'uncertain'; message: string }
+
 export function useCart(initialCheckoutLock = false) {
   const checkoutLock = useRef(initialCheckoutLock)
   const [checkoutLocked, setCheckoutLocked] = useState(initialCheckoutLock)
@@ -61,21 +63,25 @@ export function useCart(initialCheckoutLock = false) {
     setMessage('Loading cart…')
     try { return await read() } finally { guard.current = false; if (mounted.current) setBusy(false) }
   }
-  async function mutate(method: 'POST' | 'PUT' | 'DELETE', id: string, name: string, quantity?: number) {
-    if (checkoutLock.current || guard.current || !ready.current) return
+  async function mutate(method: 'POST' | 'PUT' | 'DELETE', id: string, name: string, quantity?: number): Promise<MutationResult> {
+    if (checkoutLock.current || guard.current || !ready.current) return { outcome: 'not-started' }
     guard.current = true
     ++generation.current // Any read begun before this change is obsolete.
     setBusy(true)
     setMessage('Saving cart change…')
     try {
       await cartRequest(method, id, quantity)
-      if (!mounted.current) return
-      const success = method === 'POST' ? `Added one ${name} to cart.` : method === 'DELETE' ? `Removed ${name} from cart.` : `Updated quantity for ${name}.`
+      if (!mounted.current) return { outcome: 'confirmed', refreshed: false }
+      const success = method === 'POST' ? `Added ${quantity} ${name} to cart.` : method === 'DELETE' ? `Removed ${name} from cart.` : `Updated quantity for ${name}.`
       const refreshed = await read(success)
       if (!refreshed && mounted.current) setMessage(previous => `Change saved, cart refresh failed. ${previous}`)
+      // Refresh failure cannot turn a confirmed increment into an uncertain one.
+      return { outcome: 'confirmed', refreshed: !!refreshed }
     } catch (error) {
-      if (!mounted.current) return
-      if (!(error instanceof CartError) || error.status >= 500) {
+      const message = cartErrorMessage(error)
+      const uncertainOutcome = !(error instanceof CartError) || error.status >= 500
+      if (!mounted.current) return { outcome: uncertainOutcome ? 'uncertain' : 'rejected', message }
+      if (uncertainOutcome) {
         ready.current = false
         setBlocked(true)
         const uncertain = `${cartErrorMessage(error)} The change outcome is uncertain; it may have been saved. Do not repeat the addition blindly.`
@@ -86,6 +92,7 @@ export function useCart(initialCheckoutLock = false) {
         if (sessionExpired) { ready.current = false; setBlocked(true); setExpired(true) }
         setMessage(`Change failed. ${cartErrorMessage(error)}`)
       }
+      return { outcome: uncertainOutcome ? 'uncertain' : 'rejected', message }
     } finally { guard.current = false; if (mounted.current) setBusy(false) }
   }
   return { cart, busy, blocked: blocked || checkoutLocked, expired, message, refresh, mutate, lockCheckout, unlockCheckout }

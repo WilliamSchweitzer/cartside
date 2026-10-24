@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { cartRequest, validCart } from './cartApi'
@@ -83,7 +83,7 @@ describe('storefront cart', () => {
     expect(fetcher.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1)
     expect((button as HTMLButtonElement).disabled).toBe(true)
     await act(async () => finish(new Response(null, { status: 204 })))
-    await screen.findByText('Added one Apples to cart.')
+    await screen.findByText('Added 1 Apples to cart.')
     expect(calls).toHaveLength(0)
   })
   it('reports saved changes with failed refresh and locks until a read-only refresh succeeds', async () => {
@@ -163,6 +163,28 @@ describe('storefront cart', () => {
     const assertion = expect(request).rejects.toThrow('Aborted')
     await vi.advanceTimersByTimeAsync(8000)
     await assertion
+  })
+
+  it('returns not-started without a request during initial loading, checkout locks, or another mutation', async () => {
+    const { fetcher } = setup()
+    const hook = renderHook(() => useCart())
+    let outcome = await hook.result.current.mutate('POST', product.id, product.name, 3)
+    expect(outcome.outcome).toBe('not-started')
+    await waitFor(() => expect(hook.result.current.busy).toBe(false))
+    act(() => { hook.result.current.lockCheckout() })
+    const before = fetcher.mock.calls.length
+    outcome = await hook.result.current.mutate('POST', product.id, product.name, 3)
+    expect(outcome.outcome).toBe('not-started'); expect(fetcher.mock.calls).toHaveLength(before)
+    act(() => { hook.result.current.unlockCheckout() })
+    let finish!: (r: Response) => void
+    fetcher.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    let first!: ReturnType<typeof hook.result.current.mutate>
+    act(() => { first = hook.result.current.mutate('POST', product.id, product.name, 3) })
+    outcome = await hook.result.current.mutate('POST', product.id, product.name, 3)
+    expect(outcome.outcome).toBe('not-started')
+    await act(async () => finish(new Response(null, { status: 204 })))
+    expect((await first).outcome).toBe('confirmed')
+    expect(fetcher.mock.calls.filter(([, i]) => i?.method === 'POST')).toHaveLength(1)
   })
 
   it('disables unavailable catalog additions even before an item is in the cart', async () => {

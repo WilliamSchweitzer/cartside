@@ -8,7 +8,7 @@ This is a personal learning project focused on Go application design, API gatewa
 
 ## Project status
 
-Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. Chat UI and cart acceptance remain planned; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
+Implemented: the Go/Chi server, public liveness and PostgreSQL readiness, shared pgx v5 pool, graceful shutdown, local PostgreSQL/APISIX/Keycloak infrastructure, and APISIX-managed OIDC registration/sign-in and logout. React provides a searchable grocery storefront with cart additions, quantity updates, removal, secondary backend diagnostics, and logout; it stores no tokens. APISIX protects the frontend and non-health APIs with a browser session and provides a gateway-only session check. Go verifies access tokens and exposes the current subject/issuer through `/api/me`; React displays that identity. CI checks Go, frontend, and configuration independently. Phase 2 milestones 1–3 are implemented: catalog schema migrations, 100 reproducible development products, an authenticated read-only catalog API with search and pagination, and a responsive catalog UI. User-owned cart persistence and Go operations are also implemented. Authenticated cart HTTP endpoints with CSRF protection are implemented. The cart UI is implemented. Simulated order persistence and transactional checkout Go operations are implemented. The simulated-checkout HTTP endpoint and review/confirmation UI with session-scoped same-key recovery are implemented. Order browsing and other business modules remain planned. The AI milestones provide an internal service-authenticated APISIX → deterministic mock provider path and a catalog-grounded Go shopping assistant. The assistant supports three explicit demo scenarios, validates structured suggestions, and refreshes authoritative catalog data. The authenticated, CSRF-protected assistant HTTP endpoint is implemented with bounded per-user limits and is disabled by default. The embedded demo assistant and individual suggestion acceptance are implemented; see [the AI guide](docs/ai-mock.md). Unless stated otherwise, the architecture below describes the intended design.
 
 ## Non-AI stabilization gate
 
@@ -133,7 +133,7 @@ One repository contains the frontend, backend, infrastructure configuration, and
 
 React and Go are intended to run directly on the developer's machine. Docker Compose runs PostgreSQL, APISIX, Keycloak, and a deterministic local mock AI provider. React runs on the host with Vite.
 
-Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed and storefront paths to the host-run Vite server. `/internal/*` is reserved; only the service-authenticated AI route is enabled there. The frontend calls relative `/api/products`, `/api/cart`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts. See the gateway authentication section below.
+Open **http://localhost:9080**. APISIX routes `/api/*` to Go with `/api` removed and storefront paths to the host-run Vite server. `/internal/*` is reserved; only the service-authenticated AI route is enabled there. The frontend calls relative `/api/products`, `/api/cart`, `/api/assistant/messages`, `/api/me`, and `/api/health/ready` URLs; no separate browser API origin or CORS configuration is needed. The main screen browses and searches groceries; readiness and its Retry action are under Service diagnostics. Application access requires Keycloak sign-in. The cart section supports manual shopping; simulated checkout supports explicit review, confirmation, and recovery of uncertain attempts. See the gateway authentication section below.
 
 ### Configuration
 
@@ -1391,7 +1391,7 @@ internal AI route still requires its independent service key. Enabled startup
 validates gateway configuration and positive limits without invoking inference.
 Normal catalog/cart/checkout operations and health do not depend on inference.
 
-The future chat panel calls `POST /api/assistant/messages` on the application
+The embedded chat panel calls `POST /api/assistant/messages` on the application
 origin with browser credentials, `Content-Type: application/json`,
 `X-CSRF-Protection: 1`, and exactly `{"message":"breakfast for two"}`. Go receives
 `/assistant/messages`. The decoded message must be nonblank and at most **256
@@ -1406,8 +1406,9 @@ Success is the existing version 1 result: `version`,
 array). Suggestions contain `product_id`, `quantity`, `reason`, `name`,
 `package_label`, `price_cents`, `currency`, and `available`, refreshed from the
 catalog. All responses use `Cache-Control: no-store`. This endpoint never changes
-carts or orders. Render returned text as text; suggestion acceptance remains a
-future milestone. No UI, persistence, streaming, or automatic retries are added.
+carts or orders. React renders returned text as text. Individual acceptance uses
+the existing cart API; no acceptance endpoint, persistence, streaming, or
+automatic retries are added.
 
 The single Go process defaults to 10 admitted requests per minute per verified
 issuer + subject, one in-flight request per user, and 1000 identity entries.
@@ -1448,3 +1449,102 @@ Other valid messages return local clarification with `suggestions: []`. The mock
 is deterministic and does not verify dietary/allergen suitability, natural
 language quality, billing, or live-provider compatibility. See [AI details and
 verification](docs/ai-mock.md).
+
+
+## Embedded demo assistant and suggestion acceptance
+
+The storefront now includes **Demo shopping assistant** after the catalog and
+before the cart. Start local infrastructure as documented above, export your
+trusted `.env` into the Go shell, and set `CARTSIDE_ASSISTANT_ENABLED=true`
+before restarting Go. Keep `CARTSIDE_AI_GATEWAY_URL` and the matching
+`CARTSIDE_AI_SERVICE_KEY` in the host environment only. Start Vite and sign in
+through APISIX. No frontend credentials or feature flags are needed. With the
+backend flag unset or `false`, the panel shows a safe disabled response when
+asked; normal browsing, cart controls, and checkout continue to work.
+
+Select an example to fill the labeled input, then explicitly **Send message**:
+`breakfast for two`, `vegetarian dinner`, or `snacks for a picnic`. Responses
+are deterministic simulations, not a live language model. Dietary and allergen
+suitability remains unverified; inspect product labels. Unsupported prompts
+produce clarification rather than natural-language meal planning.
+
+The input counts UTF-8 bytes (256 maximum), including multibyte characters, and
+rejects blank text and unpaired surrogates. Only the current message is sent.
+There is no conversation context on the server. The panel validates version 1,
+the exact simulated-provider label, text, suggestion fields, unique product IDs,
+USD integer-cent prices, availability, and whole quantities from 1–99 before
+rendering. User/model content is always text, never HTML. It displays each
+suggestion's catalog name, package, unit price, quantity, and reason.
+
+Receiving suggestions makes no cart request. **Decline** changes only local UI
+state. **Accept** adds exactly that suggestion's quantity through the shared
+cart mutation path; Go still validates products, availability, quantities, and
+prices. Each suggestion has independent actions; there is no Accept All.
+Pending or confirmed additions cannot be accepted twice. Cart loading,
+mutations, failed reconciliation, checkout submission, and unresolved checkout
+block acceptance. An accepted change invalidates any existing checkout review
+through the same shared cart state as manual changes.
+
+The cart hook now returns a small `MutationResult` contract:
+
+| Outcome | Panel behavior |
+| --- | --- |
+| `not-started` | No mutation sent; leave the suggestion retryable when controls are ready |
+| `confirmed` | Mark accepted; `refreshed` separately reports whether the follow-up cart GET succeeded |
+| `rejected` | Show the relevant cart error; allow a deliberate retry subject to current locks |
+| `uncertain` | Keep **Outcome uncertain** and disable Accept/Decline for that suggestion; inspect and manually adjust the cart |
+
+A confirmed addition remains accepted even if cart refresh fails. The cart
+message reports the actual added quantity. A successful GET after a lost,
+invalid, or failed mutation response cannot prove that a particular increment
+committed, so it never makes an uncertain suggestion retryable. Mutations are
+never automatically retried. Message failures can be deliberately resent;
+resending a prompt is distinct from retrying an uncertain addition. Do not use
+new suggestions or a reload as a substitute for inspecting uncertain cart changes.
+
+The transcript is component memory only, limited to 12 exchanges (at most 24
+user/assistant messages and 60 suggestions). Pending and uncertain additions are
+protected from eviction; older resolved exchanges are removed first. If all 12
+are protected, new messages stop rather than losing outcome information.
+Reloads, unmounts, and verified account changes discard the transcript and local
+accept/decline markers. Late assistant/acceptance responses cannot populate the
+next identity's panel. There is no cross-tab coordination or durable acceptance
+receipt. The UI disables concurrent sends, aborts message work after eight
+seconds or unmount, handles safe application/gateway failures, and shows a
+`Retry-After` cooldown without automatically resending anything.
+
+Verification commands:
+
+```sh
+cd frontend
+npm run lint
+npm run typecheck
+npm test
+npm run build
+cd ..
+# Uses disposable users, databases, ports and Compose resources; never developer .env.
+/path/to/python-with-pyyaml scripts/e2e.py
+```
+
+Use the Python environment setup in [the AI guide](docs/ai-mock.md) for the last
+command. The explicit browser suite sends a prompt through the public APISIX
+route, Go, the service-authenticated APISIX AI route, and the mock, accepts one
+suggestion, declines another, and checks the shared cart. It also retains the
+session-only internal-route denial, cart/order snapshots before acceptance,
+manual shopping, identity isolation, and checkout recovery regression scenarios.
+
+Remaining MVP work includes order browsing, broader catalog-grounded assistance
+beyond three fixtures, and final usability/accessibility review. Streaming,
+persistent conversations, real providers, and AI-driven checkout are outside
+this milestone. The current assistant is a deterministic demo, not a live-model
+integration or a dietary recommendation system.
+
+
+Verification for the embedded assistant milestone (2026-10-18): Node 24.15.0
+lint, application/E2E type checks, 83 unit tests, and production build passed.
+The disposable Go 1.24.0 full-stack run passed all six database integration
+packages with race detection and all five Chromium shopping tests, including
+prompt → individual acceptance/decline → shared cart. Configuration parsing and
+whitespace checks passed. Developer data was preserved. Screen readers, other
+browser engines, live providers, and remote CI were not exercised. See the
+[AI verification record](docs/ai-mock.md#embedded-panel-milestone).

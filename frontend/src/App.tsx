@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Catalog from './Catalog'
 import Cart from './Cart'
 import Checkout from './Checkout'
+import Assistant from './Assistant'
 import { useCart } from './useCart'
 
 export type Identity = { state: 'loading' | 'expired' | 'failed' } | { state: 'ready'; subject: string; issuer: string }
@@ -132,5 +133,5 @@ export default function App() {
 // publish cart or checkout state into the next identity's storefront.
 function Shopping({ identity }: { identity: Identity }) {
   const cart = useCart(true)
-  return <><Catalog cart={cart} /><Cart state={cart} /><Checkout state={cart} identity={identity} /></>
+  return <><Catalog cart={cart} /><Assistant state={cart} identity={identity} /><Cart state={cart} /><Checkout state={cart} identity={identity} /></>
 }

@@ -2,8 +2,9 @@
 
 Implemented: an internal Go shopping assistant → APISIX 3.14.1 `ai-proxy` →
 local Go mock service, plus an authenticated, rate-limited public assistant
-endpoint (disabled by default). No external model calls, chat UI, conversation
-persistence, or cart/order mutations. Go/React run on the
+endpoint (disabled by default), an embedded demo panel, and individual
+suggestion acceptance through the ordinary cart API. No external model calls
+or persistent conversation history. Inference itself never mutates carts/orders. Go/React run on the
 host; `backend/cmd/mock-ai` runs in Compose.
 
 ## Catalog-grounded internal operation
@@ -316,7 +317,7 @@ Frontend and full browser E2E checks were not rerun for this internal Go change.
 The [README public contract](../README.md#authenticated-assistant-endpoint)
 documents the feature flag, strict JSON/Unicode byte limits, response fields,
 error codes, local admission semantics, restart/multiple-instance limitations,
-and the contract for a future chat panel. Configuration lives only in Go's host
+and the contract used by the embedded chat panel. Configuration lives only in Go's host
 environment; the default disabled endpoint still requires authentication and
 CSRF and returns `assistant_unavailable` without constructing an AI client.
 The limiter uses verified issuer/subject, never request identity headers or IP.
@@ -345,3 +346,51 @@ session-only denial. Exactly one provider invocation was observed in that run.
 The runner used the host default Go 1.27.2; standalone Go checks also passed
 with that toolchain. Disposable resources were removed and developer data was
 preserved. Live providers and remote CI were not exercised.
+
+
+## Embedded panel milestone
+
+The [README UI contract](../README.md#embedded-demo-assistant-and-suggestion-acceptance)
+documents enabled/disabled setup, the three demo prompts, byte counting,
+response validation, individual Accept/Decline, checkout coordination, mutation
+outcomes, memory limits, and remaining MVP gaps. The browser receives no service
+key: it calls only `/api/assistant/messages` with its same-origin session and
+CSRF header. Go uses its service key for the internal APISIX route.
+
+For a manual demo, enable the assistant in Go's environment, restart Go, sign in,
+choose `breakfast for two`, and send. Observe that the cart is unchanged until
+you accept one suggestion. Decline a second and verify it makes no cart request.
+Try `vegetarian dinner` and `snacks for a picnic`; none of these fixture names
+establishes dietary/allergen suitability. Set the feature flag to `false` and
+restart Go to see disabled handling while ordinary shopping remains available.
+Rate-limit errors show a visible Retry-After countdown. There are no automatic
+message or mutation retries.
+
+For failure demonstrations, use mocked frontend tests or the isolated provider
+fault runner rather than changing a developer's infrastructure. A confirmed
+cart mutation with a failed refresh must stay accepted. A lost mutation response
+must stay **Outcome uncertain** even after a successful cart read. Inspect and
+manually adjust that cart; do not resend an increment blindly. Local markers and
+history disappear on reload/account change, so this is not durable acceptance
+tracking. The server has no conversation context or acceptance endpoint.
+
+Run frontend lint/typecheck/tests/build as above. The explicit `scripts/e2e.py`
+runner now exercises the actual panel, accepting one suggestion and declining
+another, with exactly one mock inference across both APISIX routes. It verifies
+cart/order snapshots are unchanged by inference, checks the accepted quantity
+in the shared cart, and retains all existing browser shopping/checkout cases.
+The mock still proves only this pinned local protocol, not live model quality,
+provider portability, billing, dietary safety, or production deployment.
+
+
+Embedded panel verification (2026-10-18): Node 24.15.0 frontend lint,
+application/E2E type checks, 83 unit tests, and production build passed.
+Configuration parsing and whitespace checks passed. The isolated runner, using
+Go 1.24.0, passed all six PostgreSQL integration suites with the race detector
+and all five Chromium browser tests. The panel scenario traversed both APISIX
+paths, added one selected suggestion, declined another without a cart change,
+and verified shared cart quantities. Inference alone left cart/order snapshots
+unchanged, and the session-only internal request remained denied. Exactly one
+mock inference was observed. Disposable resources were removed; developer
+configuration and persistent data were preserved. Screen-reader testing, other
+browser engines, live providers, and remote CI were not exercised.
