@@ -17,7 +17,7 @@ for name, service in services.items():
     assert not service.get('extra_hosts'), name
     assert name == 'edge' or not service.get('ports'), name
     assert service['logging']['options']['max-size'] == '10m', name
-    assert service.get('healthcheck') or name == 'keycloak-db', name
+    assert service.get('healthcheck') or name in ('keycloak-db', 'app-db', 'migrate'), name
     if name in ('prometheus','grafana'): assert service['profiles'] == ['observability']
 assert services['keycloak']['command'] == ['start', '--import-realm']
 assert not any('host.docker.internal' in (ROOT/p).read_text() for p in ['compose.deploy.yaml','infra/deploy/apisix.yaml','infra/deploy/prometheus.yaml'])
@@ -32,7 +32,6 @@ for route in routes['routes']:
 realm=json.loads((ROOT/'infra/deploy/realm.json').read_text())
 assert 'users' not in realm
 assert realm['clients'][0]['redirectUris'] == ['https://cartside.wschweitzer.com/auth/callback']
-print('Deployment boundaries/configuration passed')
 if args.manifests:
     images={s['image'] for s in services.values() if not s['image'].startswith('cartside-')}
     for path in ['backend/Dockerfile','frontend/Dockerfile','infra/mock-ai.Dockerfile']:
@@ -42,3 +41,11 @@ if args.manifests:
         manifest=json.loads(result.stdout)
         assert any(m.get('platform',{}).get('architecture')=='arm64' and m.get('platform',{}).get('os')=='linux' for m in manifest['manifests']), image
         print(image+': linux/arm64 available')
+
+assert services['api']['environment']['DATABASE_URL'].startswith('postgres://cartside_runtime:')
+assert 'APP_MIGRATION_PASSWORD' not in str(services['api']['environment'])
+assert services['migrate']['environment']['DATABASE_URL'].startswith('postgres://cartside_migrate:')
+assert services['migrate']['profiles'] == ['tools']
+assert services['api']['depends_on']['app-db']['condition'] == 'service_completed_successfully'
+
+print('Deployment boundaries/configuration passed')

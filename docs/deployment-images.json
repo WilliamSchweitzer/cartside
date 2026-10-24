@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-24",
+  "source_base_revision": "57e55c6229b3d77989fde4bc3fbfd1702502ba77",
+  "source_note": "Base revision plus packaging verification changes in this commit; all application builds and executions native linux/arm64 on Docker Desktop, no emulation or cross-compilation.",
+  "images": [
+    {
+      "reference": "cartside-api:verify-20261024-go1273",
+      "id": "sha256:bff52b3ee177efd2b7c88ded55b848837de1998562cb672ce531ba7a6546a703",
+      "repo_digests": [
+        "cartside-api@sha256:bff52b3ee177efd2b7c88ded55b848837de1998562cb672ce531ba7a6546a703"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 232219510
+    },
+    {
+      "reference": "cartside-frontend:verify-20261024-go1273",
+      "id": "sha256:eaca9bbe3ce76c695db873f588b850bd1d76ec13a1f861bb38fc5733c5f5ae4a",
+      "repo_digests": [
+        "cartside-frontend@sha256:eaca9bbe3ce76c695db873f588b850bd1d76ec13a1f861bb38fc5733c5f5ae4a"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 81634558
+    },
+    {
+      "reference": "cartside-mock:verify-20261024-go1273",
+      "id": "sha256:c24d2d8100aa02315dd7e36ab7286d465abd2115eb97c71bcb4c31c982cb87e8",
+      "repo_digests": [
+        "cartside-mock@sha256:c24d2d8100aa02315dd7e36ab7286d465abd2115eb97c71bcb4c31c982cb87e8"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 25364485
+    },
+    {
+      "reference": "postgres:17.10-bookworm",
+      "id": "sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f",
+      "repo_digests": [
+        "postgres@sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 638483816
+    },
+    {
+      "reference": "quay.io/keycloak/keycloak:26.8.1",
+      "id": "sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244",
+      "repo_digests": [
+        "quay.io/keycloak/keycloak@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 751413558
+    },
+    {
+      "reference": "apache/apisix:3.19.0-ubuntu",
+      "id": "sha256:bb4958b943949b3543353481eff1333e10b3323c6095dd0af4406de2b8cf738e",
+      "repo_digests": [
+        "apache/apisix@sha256:bb4958b943949b3543353481eff1333e10b3323c6095dd0af4406de2b8cf738e"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 694827268
+    },
+    {
+      "reference": "nginxinc/nginx-unprivileged:1.30.1-alpine",
+      "id": "sha256:acc3239879a65d9e3d250b21847ec3f34f33367017394d22830242af15cf1cb0",
+      "repo_digests": [
+        "nginxinc/nginx-unprivileged@sha256:acc3239879a65d9e3d250b21847ec3f34f33367017394d22830242af15cf1cb0"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 81220781
+    },
+    {
+      "reference": "prom/prometheus:v3.13.1",
+      "id": "sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
+      "repo_digests": [
+        "prom/prometheus@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 335487269
+    },
+    {
+      "reference": "grafana/grafana:13.2.3",
+      "id": "sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572",
+      "repo_digests": [
+        "grafana/grafana@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572"
+      ],
+      "os": "linux",
+      "architecture": "arm64",
+      "size_bytes": 1812145601
+    }
+  ],
+  "build_base_manifest_digests": {
+    "golang:1.27.3-bookworm": "sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5",
+    "node:24.15.0-bookworm-slim": "sha256:4e6b70dd6cbfc88c8157ba19aa3d9f9cce6ba4703576d55459e45efcbc9c5f5d",
+    "debian:bookworm-slim": "sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8",
+    "nginxinc/nginx-unprivileged:1.30.1-alpine": "sha256:acc3239879a65d9e3d250b21847ec3f34f33367017394d22830242af15cf1cb0"
+  },
+  "deployment_configuration_sha256": {
+    "compose.deploy.yaml": "4955296909707d18dfce331d6d9cbf9deb023172cbc7bdfc288a72af7da25cf9",
+    "infra/deploy/.env.example": "31d0b426167289bd9e78b267673600f9dcca1ab20c3fb7957b57442412a03d42",
+    "infra/deploy/apisix.yaml": "9a7d8010ccd98682296b233674cba585c2a43c534d11c2479873f3614fb3f585",
+    "infra/deploy/edge.conf": "9d0343c9ac8454b02a5a374ec05c43421f4eb3d6e4c1f9c584a9d9becfa0b1c7",
+    "infra/deploy/prometheus.yaml": "4f01e4ba13ea52f5135e847ec1e2ea7af149b28cd41b2a483e5d210f348a7a4e",
+    "infra/deploy/provision-app-db.sh": "01ff4157ce6bcf72204ab381d783f9ad5065fd7d709a9f277a76762b4753595b",
+    "infra/deploy/provision-keycloak-db.sh": "5393b5a9ff3c28428460e6257b6fe87097292867b91387b7e2cf44afb514c795",
+    "infra/deploy/realm.json": "42446a6b0b3cd35b42035eb7e2f6992e434eb76aec02a40b00adecffd01492bf"
+  }
+}

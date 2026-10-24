@@ -65,9 +65,24 @@ test('sign-in, search, pagination, cart persistence, isolation, keyboard/mobile 
   await login(page)
   if (!config.deployment) await expect.poll(() => hmrConnected).toBe(true)
   else {
-    expect((await page.context().cookies()).some(cookie => cookie.secure && cookie.httpOnly)).toBe(true)
+    const sessionCookies = (await page.context().cookies()).filter(cookie => cookie.name.startsWith('session'))
+    expect(sessionCookies.length).toBeGreaterThan(0)
+    expect(sessionCookies.every(cookie => cookie.secure && cookie.httpOnly && cookie.sameSite === 'Lax')).toBe(true)
+    const assets = await page.evaluate(async () => {
+      const urls = [...document.querySelectorAll<HTMLScriptElement>('script[src]')].map(node => node.src)
+        .concat([...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')].map(node => node.href))
+      return Promise.all(urls.map(async url => {
+        const response = await fetch(url)
+        return { path: new URL(url).pathname, status: response.status, type: response.headers.get('content-type') }
+      }))
+    })
+    expect(assets.some(asset => asset.path.startsWith('/assets/') && asset.type?.includes('javascript') && asset.status === 200)).toBe(true)
+    expect(assets.some(asset => asset.path.startsWith('/assets/') && asset.type?.includes('text/css') && asset.status === 200)).toBe(true)
     expect((await page.request.post(config.origin+'/api/cart/items', { data: {} })).status()).toBe(403)
-    for (const path of ['/internal/ai/chat/completions', '/metrics', '/admin/']) {
+    expect((await page.request.post(config.origin+'/api/cart/items', {
+      headers: { 'X-CSRF-Protection': '1', Origin: 'https://other.invalid' }, data: {},
+    })).status()).toBe(403)
+    for (const path of ['/internal/ai/chat/completions', '/metrics', '/admin/', '/apisix/']) {
       expect((await page.request.get(config.origin+path)).status()).toBe(404)
     }
   }

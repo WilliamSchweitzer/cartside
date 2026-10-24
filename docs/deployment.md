@@ -57,10 +57,10 @@ disabling validation. See [APISIX OIDC settings](https://apisix.apache.org/docs/
 Use a native linux/arm64 Docker engine with Compose v2/buildx, sufficient free disk,
 Python 3 with `scripts/requirements-ci.txt`, and openssl. Browser verification also
 needs Node 24, `npm ci` in `frontend`, and Playwright Chromium
-(`npx playwright install chromium`). Docker builds use pinned Go 1.27.2 and Node
-24.15.0; the mock Dockerfile remains unchanged with its existing Go 1.24.0 builder
-and scratch/non-root runtime. The old mock builder is a maintenance exception;
-review its unsupported Go toolchain before public launch. The application module
+(`npx playwright install chromium`). Docker builds use pinned Go 1.27.3 and Node
+24.15.0; the mock builder now matches the API builder, preserving its
+scratch/non-root runtime. Go 1.27.3 includes the latest reviewed crypto/x509
+security patch ([release history](https://go.dev/doc/devel/release#go1.27.3)). The application module
 still declares Go 1.24 compatibility.
 
 From the repository root:
@@ -106,11 +106,13 @@ Do not start the entire stack before these explicit initialization steps:
 
 ```sh
 dc up -d --wait postgres
-dc up -d keycloak-db
-dc wait keycloak-db                 # must exit successfully
+dc run --rm --no-deps app-db
+dc run --rm --no-deps keycloak-db
 dc up -d --wait keycloak mock-ai
-dc run --rm --no-deps --entrypoint migrate api up
-dc run --rm --no-deps --entrypoint seed api
+dc run --rm --no-deps migrate
+dc run --rm --no-deps --entrypoint seed migrate
+# Apply explicit runtime grants after creating/updating the schema:
+dc run --rm --no-deps app-db
 dc up -d --wait api frontend apisix
 # Only after certificates have been supplied out of band:
 dc up -d --wait edge
@@ -122,6 +124,28 @@ when it does not exist**. No users are imported. The confidential OIDC client se
 is resolved from the Keycloak environment. The realm enables self-registration and
 brute-force protection. The sample catalog seed inserts deterministic demo products;
 it does not copy development data. Migrations are explicit, not API startup work.
+
+`POSTGRES_USER` is bootstrap administration only. `app-db` reproducibly creates
+`cartside_migrate` and `cartside_runtime` with independent deployment passwords.
+The `migrate` tools-profile service receives only the migration database URL;
+the API receives only the runtime URL. Neither identity is superuser, creates
+roles, replicates, bypasses RLS or inherits another role. Keycloak remains a
+separate role/database; deployment bootstrap revokes PUBLIC access to its database. No runtime schema creation, temporary tables, migration
+metadata access, catalog price/content writes or order history mutation is granted.
+Runtime can read products, create/version carts, mutate cart items, and insert/read
+orders/snapshots. PostgreSQL requires an UPDATE privilege for `SELECT FOR SHARE`;
+`UPDATE(id)` on products supplies the narrow column privilege needed for checkout
+locking. It does permit direct ID updates by a compromised runtime identity; no
+catalog write endpoint exists, and catalog content/price columns stay protected.
+
+For an existing deployment database, stop API mutations and take a verified backup,
+then run the same app-db → migrate → app-db sequence without dropping databases or
+volumes. Bootstrap transfers only the named application tables and immutable-order
+trigger function to the migration role; unrelated objects are not reassigned.
+It revokes runtime table/sequence privileges before applying explicit current grants.
+The transaction preserves rows and supports repeated execution. Migration/bootstrap
+credentials belong only in operator tooling, never API environment or browser bundles.
+Run app-db after every migration; new tables get no automatic runtime permissions.
 
 Realm import does **not** update existing realms. For later client secret/redirect,
 registration or policy changes, use authenticated private administration and verify
@@ -148,9 +172,13 @@ python3 scripts/validate-config.py
 python3 scripts/verify-deployment.py
 ```
 
-The runner expects locally built `cartside-{api,frontend,mock}:demo-001` images.
+The runner defaults to locally built `cartside-{api,frontend,mock}:demo-001` images.
+Set `CARTSIDE_DEPLOY_IMAGE_TAG` to verify a different immutable local build tag.
 It uses loopback port 18443 and `cartside.localhost` / `auth.cartside.localhost`
-(Chromium resolves localhost subdomains to loopback). A port collision must fail;
+(Chromium resolves localhost subdomains to loopback). The runner also supplies a
+process-local Node DNS hook for exactly those two disposable names, covering both
+callback and promise lookups used by Playwright. It does not modify system DNS,
+`/etc/hosts`, public names or production issuer/certificate checks. A port collision must fail;
 never stop an existing service to make room. It removes only its random project's
 containers/volumes and temporary private files. It never sources `.env` or
 `.deploy/demo.env`. Test certificate verification is bypassed **only in this
@@ -159,28 +187,21 @@ explicit browser runner**; production OIDC TLS verification stays enabled.
 The existing five browser scenarios cover login/logout, catalog/static assets,
 cart isolation, mock suggestions and explicit acceptance, checkout atomicity/retry
 and conflicts. Deployment mode replaces Vite HMR expectations with secure cookie,
-CSRF rejection and edge route denial assertions. Separately verify identity-host
+CSRF rejection and edge route denial assertions. The deployment browser scenario verifies identity-host
 `/admin/`, `/realms/master/`, `/health/ready` and `/metrics` return 404, discovery
 returns the public issuer, public redirects never contain internal service names,
-and signed-out APIs return 401. Inspect `dc ps`/`docker inspect` for absence of
-published API/database/mock/metrics/admin ports. Keep host/service logs and browser
+and signed-out APIs return 401. The runner inspects health and published ports,
+verifies migration ownership/runtime denial and an upgrade from bootstrap-owned
+tables, repeats browser flows after restart, starts private monitoring and checks
+both Prometheus targets, then checks clean shutdown exits. It samples container
+resources by phase and records disk use. Sampling can miss transient peaks. Keep host/service logs and browser
 artifacts private; tests suppress sensitive error details.
 
-Verification on 2026-10-24: all required and optional pinned image manifests
-include linux/arm64, including both Go builders and nginx 1.30.1. Local Docker
-engine reported linux/arm64. Compose validation and static boundary checks passed.
-Go formatting/vet/unit tests/build passed using host Go 1.27.2; frontend lint/type checks,
-86 tests and production build passed using Node 24.15.0. Docker build was attempted
-natively, but host/Docker disk exhaustion caused a read-only build cache filesystem;
-Docker Desktop subsequently reported it could not start. Application image builds
-are **incomplete**, and native container runtime, HTTPS/browser, migrations/seed,
-OIDC backchannel behavior, optional monitoring and shutdown checks are **unverified**.
-The disposable HTTPS runner was invoked and failed at stack startup because the
-Docker daemon was unavailable. No successful production-style runtime test is claimed. Existing developer volumes
-were not removed. Docker storage was subsequently recovered: a layer-write build and PostgreSQL
-write probe passed, and existing developer services became healthy. After approved
-application/cache removal, host free space reached about 80 GiB. Full deployment
-image builds and HTTPS verification still need to be rerun before provisioning.
+The earlier disk-exhaustion/build-cache failure was resolved without removing
+developer volumes. Native builds and the disposable HTTPS stack have since run;
+see [the dated verification record](deployment-verification.md) for executed
+checks, exact image digests, sampled resources and remaining limits. The record
+supersedes the earlier incomplete-build evidence; it is not a public-launch approval.
 
 ## Operations and launch limits
 
@@ -220,9 +241,8 @@ quotas reset on restart and the deterministic mock incurs no live-model charges.
 There is no CAPTCHA, verified-email requirement, global registration quota,
 account/storage retention policy or comprehensive edge abuse/DoS control. Decide
 and implement appropriate registration/traffic limits before public launch, or
-disable self-registration and use explicitly provisioned demo accounts. The API
-currently uses the PostgreSQL initialization role; separating runtime/migration
-privileges is additional hardening to complete before public use.
+disable self-registration and use explicitly provisioned demo accounts. The API uses the restricted runtime role described above; migrations and bootstrap
+remain explicit operator privileges.
 
 For rollback, stop mutations, preserve the current release and take a verified
 backup before migration. Confirm old binaries/config remain compatible with the
@@ -237,18 +257,19 @@ secure off-VM retention/encryption, credentials/configuration recovery, volume
 failure recovery, and a full restore rehearsal with recorded RPO/RTO. Merely
 having a named volume or copying a live data directory is not a backup strategy.
 
-Before provisioning the VM, complete these gates in order:
+Remaining public-launch gates (packaging verification does not authorize launch):
 
-1. Finish native ARM64 image builds using the recovered Docker engine and record digests.
-2. Run the disposable HTTPS suite and identity/port/shutdown checks above; resolve
-   OIDC or image/runtime failures without weakening validation.
-3. Review supported security patches (including the preserved mock builder),
-   registration abuse policy, database runtime privileges and secret lifecycle.
-4. Test backup/restore and release/migration rollback; measure resources and select
-   a VM size within verified Always Free availability/limits.
-5. Review the planned DNS names, firewall (443 and restricted SSH only), certificate
-   delivery/renewal and private administrative access. Obtain separate authorization
-   for Oracle provisioning, DNS changes, certificate issuance and public deployment.
+1. Implement and rehearse application/Keycloak backup and restore, off-VM retention,
+   configuration recovery, and release/migration rollback with recorded RPO/RTO.
+2. Decide public registration protections or disable registration; define traffic,
+   account/storage retention and resource-abuse controls.
+3. Review secret delivery/rotation, private administrator recovery and removal of
+   bootstrap credentials; lock release dependencies and review patches again at launch.
+4. Select VM sizing and verify cloud availability/limits using target-host testing;
+   local resource samples do not establish production capacity.
+5. Review DNS, firewall (443 and restricted SSH), certificate delivery/renewal and
+   private administration. Obtain separate authorization for Oracle provisioning,
+   DNS changes, public certificate issuance and public deployment.
 
-No Oracle provisioning, DNS change, certificate request, public deployment, commit
-or push is authorized or performed by this package.
+This package performs no Oracle provisioning, DNS changes, public certificate
+requests or public deployment. Those actions require separate authorization.

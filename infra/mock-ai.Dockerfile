@@ -1,4 +1,4 @@
-FROM golang:1.24.0-bookworm AS build
+FROM golang:1.27.3-bookworm AS build
 WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 COPY backend/cmd/mock-ai ./cmd/mock-ai

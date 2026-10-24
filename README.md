@@ -1601,5 +1601,8 @@ HTTPS edge configuration and disposable HTTPS verification runner are available.
 See [the deployment guide](docs/deployment.md) for fresh-database setup, identity
 provisioning, secrets, verification evidence and launch blockers. Packaging does
 not provision Oracle resources, change DNS, request public certificates or publish
-the demo. Docker storage has since been recovered, but deployment image builds
-and HTTPS runtime verification still need to be rerun before public launch.
+the demo. Native ARM64 images, the six-scenario HTTPS suite before/after restart,
+restricted runtime/migration database roles, private monitoring and orderly shutdown
+were verified on 2026-10-24. See [executed checks, digests and resource measurements](docs/deployment-verification.md).
+Backup/restore, public registration protections, secret/administrator recovery,
+target-host sizing, certificate renewal and public-launch authorization remain gates.
